@@ -1,0 +1,182 @@
+---
+title: "group ass" 
+format: html 
+editor: visual
+---
+
+# Packages
+
+```{r,message=FALSE,warning=FALSE}
+library(shiny)
+library(bslib)
+library(bsicons)
+library(shinydashboard)
+library(plotly)
+```
+
+# UI
+
+```{r}
+
+ui <- dashboardPage(
+  skin = "black",
+  dashboardHeader(title = "Shiny APP"),
+  # --------------------------Side bar------------------------------------
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Data_Splitting", tabName = "dataSplitting", icon = icon("image")),
+      menuItem("Analysis", tabName = "analysis", icon = icon("chart-line")),
+      menuItem("Upload Images", tabName = "uploadImages", icon = icon("upload"))
+      # menuItem("View Images", tabName = "viewImages", icon = icon("eye")) # New tab for viewing images
+    )
+  ),
+  
+  
+  # --------------------------Body------------------------------------
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "dataSplitting",
+              h2("Split images from the Alzheimer’s model dataset"),
+              plotlyOutput("densityPlot")
+      ),
+      tabItem(tabName = "analysis",
+              h2("Report"),
+              fluidRow(
+                column(6, h3("Histogram of MPG"), plotlyOutput("histPlot")),
+                column(6, h3("Scatter Plot of MPG vs HP"), plotlyOutput("scatterPlot"))
+              ),
+              fluidRow(
+                column(6, h3("Box Plot of HP"), plotlyOutput("boxPlot")),
+                column(6, h3("Bar Plot of Gear Counts"), plotlyOutput("barPlot"))
+              )
+      ),
+      tabItem(tabName = "uploadImages",
+              h2("Upload Images"),
+              fileInput("file1", "Choose Image File",multiple = TRUE, accept = c("image/jpeg", "image/jpg", "image/png")),
+              verbatimTextOutput("fileInfo"),
+              
+              h2("View and Select Image"),
+              uiOutput("imageSelect"),
+              actionButton("predictBtn", "Predict"),
+              imageOutput("displayedImage"),  # Add this line to display the image
+              textOutput("selectionInfo"),
+              verbatimTextOutput("predictionOutput")
+      )
+    )
+  )
+)
+
+```
+
+# Server
+
+```{r}
+server <- function(input, output) {
+  
+  # --------------------------Graph------------------------------------
+  output$histPlot <- renderPlotly({
+    ggplot(mtcars, aes(x = mpg)) + geom_histogram(binwidth = 3, fill = "blue", color = "black") +
+      labs(title = "Histogram of Miles Per Gallon (MPG)", x = "MPG")
+  })
+  
+  output$scatterPlot <- renderPlotly({
+    ggplot(mtcars, aes(x = hp, y = mpg)) + geom_point() +
+      labs(title = "Scatter Plot of HP vs MPG", x = "Horsepower (HP)", y = "Miles Per Gallon (MPG)")
+  })
+  
+  output$boxPlot <- renderPlotly({
+    ggplot(mtcars, aes(y = hp, x = factor(1))) + geom_boxplot() +
+      labs(title = "Box Plot of Horsepower (HP)", x = "", y = "Horsepower (HP)")
+  })
+  
+  output$barPlot <- renderPlotly({
+    ggplot(mtcars, aes(x = factor(gear))) + geom_bar(fill = "cornflowerblue") +
+      labs(title = "Bar Plot of Gear Counts", x = "Number of Gears", y = "Count")
+  })
+
+  output$densityPlot <- renderPlotly({
+    ggplot(iris, aes(x = Sepal.Length)) + geom_density(fill = "green") +
+      labs(title = "Density Plot of Iris Sepal Length", x = "Sepal Length (cm)")
+  })
+
+# --------------------------Uploading File------------------------------------
+  output$fileInfo <- renderPrint({
+    req(input$file1)
+    permanent_path <- file.path("Images_upload", input$file1$name)
+    file.copy(input$file1$datapath, permanent_path)
+    print(paste("File moved to:", permanent_path))
+  })
+  
+  observeEvent(input$file1, {
+    req(input$file1)
+    for (i in 1:nrow(input$file1)) {
+      file_temp <- input$file1$datapath[i]
+      file_name <- input$file1$name[i]
+      permanent_path <- file.path(getwd(), "Images_upload", file_name)
+      file.copy(file_temp, permanent_path, overwrite = TRUE)
+      }    
+  })  
+  
+# --------------------------Select  File------------------------------------
+
+  # Image reader(select images)
+  output$imageSelect <- renderUI({
+    req(list.files(path = file.path(getwd(), "Images_upload"), pattern = "png|jpg|jpeg"))
+    img_files <- list.files(path = file.path(getwd(), "Images_upload"), pattern = "png|jpg|jpeg")
+    selectInput("selectedImage", "Choose an image:",
+                choices = img_files,
+                selected = img_files[1])
+  })
+
+  # Preview Images
+  output$displayedImage <- renderImage({
+    req(input$selectedImage)
+    # Specify the path to the image
+    filename <- file.path(getwd(), "Images_upload", input$selectedImage)
+    # Return a list including the image path and content type
+    list(src = filename,
+         contentType = 'image/png',
+         width = "auto",
+         height = "auto",
+         alt = "This is the selected image")
+  }, deleteFile = FALSE)  # Set deleteFile to FALSE so the image is not deleted after being displayed.
+
+  # Confirm Button
+  observeEvent(input$confirmButton, {
+    req(input$selectedImage)
+    output$selectionInfo <- renderText({
+      paste("You have selected:", input$selectedImage)
+    })
+  })
+  
+  # predict Button
+observeEvent(input$predictBtn, {
+  req(input$selectedImage)
+  filename <- file.path(getwd(), "Images_upload", input$selectedImage)
+
+  img <- png::readPNG(filename)
+
+  #cell_ids = gsub(".*cell_|\\.png", "", input$selectedImage)
+  #img_inside <- get_inside(cell_ids, img, cell_boundaries)
+  img_inside <- img
+  img_masked_resized <- mask_resize(img, img_inside, w = 64, h = 64)
+
+  img_array <- array_reshape(as.array(img_masked_resized), c(1, 64, 64, 1)) / 255
+  
+  predictions <- model %>% predict(img_array)
+  predicted_class <- which.max(predictions)
+
+  output$predictionOutput <- renderText({
+    paste("Predicted class:", predicted_class)
+  })
+})
+
+}
+```
+
+# Run shiny app
+
+```{r}
+# Run the application
+shinyApp(ui, server)
+```

@@ -1,0 +1,1263 @@
+---
+title: "Project report"
+subtitle: "Assessing the performance and characteristics of a convolutional neural network classifier for gene expression cluster prediction"
+authors:
+  - Andrew Xue (520477278)
+  - Chenqi Shen (520193057)
+  - Jeremy Uy (510498405)
+  - Kelvin Yu (510438892)
+  - Ruijie Fan (520180242)
+  - Zexu Zhang (500060272)
+bibliography: DATA3888.bib
+nocite: '@*'
+format: 
+  html: 
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+editor: visual
+---
+
+```{r libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(patchwork)
+library(caret)
+```
+
+## Executive summary
+
+This study aims to reduce the complexity of gene expression data extraction by using convolutional neural networks (CNNs) and image data to predict cell clusters and to validate the effectiveness of this approach.
+
+**Key Findings**
+
+-   The base CNN model trained with 1000 images exhibited a low cross-validation accuracy of 8%, which is lower than the 13% no-information rate. 
+
+-   After expanding the training dataset to 10,000 images, the accuracy increased slightly to 11%, but the model still suffered from overfitting and low predictive reliability.
+
+-   Predictions among healthy mouse samples are more consistent than predictions between healthy mouse and Alzheimer's disease model samples, which indicates that the model may have structural problems or overfit specific subsets of the data.
+
+**Key Figures**
+
+Boxplots of accuracy and F1 scores are included (Figure 3.1 B and C), showing the performance of the model trained on 1000 and 10000 images. In addition, heatmaps (Figure 3.2 A1, A2, B1, and B2) illustrate the distribution of predictions across clusters versus actual labels. These plots highlight the challenges of achieving accurate predictions and the differences in model performance across datasets.
+
+**Practical Relevance**
+
+This research has important relevance for the biological and medical fields. By improving CNN models to predict cell clusters accurately based on image data, researchers could reduce their reliance on complex gene expression data, and reduce research costs (time, expense, etc.)  Future work should focus on addressing existing limitations including model overfitting and structural issues by using larger datasets and enhanced CNN construction. This will ideally improve the reliability and practical application of CNNs in medical diagnostics and research.
+
+## Introduction
+
+Given recent advancements in biotechnology, the availability of gene expression data presents a plethora of potential research, however gene expression data obtainment is highly costly (Frumkin et al., 2017). In cell analysis, this data can be used to aggregate cells of similar expression into clusters. By leveraging the ability of a Convolution Neural Network (CNN) to predict classify images based on extracted features from image data, this classifier aims to remove the need for extracting gene expression data by predicting gene clusters. This project explores whether a CNN classifier can be used to predict cell clusters and if this technique has any other implications for different datasets.
+
+CNNs, a type of deep learning model, are particularly suited for image classification due to their architecture, which mimics the human visual system (Xie & Yuille, 2017). CNNs involve multiple stages, including data preprocessing, model training, evaluation, and validation, each responsible for detecting different features of an image, such as edges, textures, and shapes. The hierarchical nature of CNNs enables them to learn complex patterns from large datasets, making them ideal for medical image analysis where high precision is required.
+
+The methodology of this project involves analyzing seven distinct datasets to evaluate the performance of a CNN classifier in predicting cell clusters. These datasets include a subset of cell images from Fresh Frozen Mouse Brain for Xenium Explorer Demo (10x Genomics, 2023a) and six datasets from Xenium In Situ Analysis of Alzheimer's Disease Mouse Model Brain Coronal Sections from One Hemisphere Over a Time Course (10x Genomics, 2023b). In the former dataset,10x Genomics obtained a 10µm tissue section from a C57BL/6 mouse from Charles River Laboratories, prepared according to the Xenium In Situ protocols for fresh frozen tissues. For the latter, formalin-fixed and paraffin-embedded (FFPE) tissue samples were collected from three wild-type (healthy) and three CRND8 APP-overexpressing transgenic (unhealthy) male mouse brains, with each brain hemisphere included at three different ages (2.5, 5.7, and 13.2 months for wild-type and 2.5, 5.7, and 17.9 months for transgenic mice). The tissue sections were prepared and deparaffinized according to the Xenium In Situ protocols, followed by gene expression preparation as outlined in the respective user guides.
+
+The results from the CNN classifier are expected to showcase its capability in providing insight into the gene expression patterns of brain cells. While these predictions may not offer a complete substitute for direct gene expression data, they present a valuable proxy that can significantly reduce the cost and aid in research that may not require such detailed data. Moreover, the findings from this project have the potential to inform the development of more sophisticated models and facilitate their integration into medical diagnosis tools that are more resource efficient.
+
+## Methods
+
+### 2.1 Research questions
+
+This study aims to explore the performance of convolutional neural networks (CNNs) in classifying cell images from a biotechnology dataset into cluster identities. The specific research questions addressed are as follows:
+
+Classification Performance: What is the performance of a convolutional neural network classifier in classifying biotechnology dataset cell images into cluster identities using all clusters? Data Size and Accuracy: Does the accuracy of CNN classifiers increase with increasing training data size? Cluster Prediction Differences: Are there any differences in the proportion of cell cluster predictions using a CNN trained on the Biotechnology data, between random image samples from original, WT, and TgCRND8 coronal sections?
+
+### 2.2 Dataset selection
+
+For each question: The base study will use the lab datasets (The University of Sydney, 2024). Moreover, extension 1 will still use the laboratory data, but at a larger size, dividing the images into 1,000 and 10,000. Extension 2 uses Alzheimer's disease mouse model brain data, which includes 6 different datasets (2.5 months of Alzheimer's disease and no Alzheimer's disease, 5.7 months of Alzheimer's disease and no Alzheimer's disease, 17.9 months of Alzheimer's disease, and 13.4 months of no Alzheimer's disease) (10x Genomics, 2023b).
+
+### 2.3 Research design
+
+![Flowchart of key research methods](flowchart.png)
+
+Here is the method flow chart about 3 different research.
+
+For the Basic research,The main target is training the basic CNN model to successfully classify the image data into different clusters. There are 1000 images data used to train a CNN model. And we use the cross-validation to get the accuracy of the basic CNN model.
+
+For Extension Research 1, the larger size of the same dataset (1000 images, 10000 images) are respectively used to improve the model performance(Through the cross-validation method to get the accuracy, compare with the origin CNN model) and check the influence to the model from larger train sets.
+
+For Extension Research 2, after getting an effective and accurate CNN model. We use the CNN model to predict the distribution of cells in each cluster of the lab data and the other 6 data sets. After obtaining the results, we address our third research question.
+
+### 2.4 Data processing
+
+To process the data, the images were read and resized to ensure uniformity in dimensions, which is crucial for the consistency of the input data. Following this, cell IDs were extracted from the image metadata to accurately label and track each cell throughout the analysis. Next, cell boundary data was read from a CSV file, which provided the necessary information to delineate the internal areas of the cells within the images. This boundary data was then used to mark the internal areas on the images, creating masks that highlighted the regions of interest. Subsequently, these images were masked and resized to further refine the input data for the CNN model. With the preprocessed images, the CNN model was trained and validated.
+
+### 2.5 Model description
+
+Our CNN model includes the following layers, convolutional layer, pooling layer, fully connected layer and dropout layer. The model extracts image features through convolutional layers, then reduces feature map size through pooling layers, uses dropout layers to prevent overfitting, and finally performs classification through fully connected layers. 2.6 Outcome measure 5-fold cross-validation was used, with 20% of images used in the testing set, 20% of the remaining images used for validation, and the remaining used as the testing set. Accuracy and F1 were used as the performance measures. The Chi-square statistic was used to compare the similarity of the distributions of predictions from different datasets.
+
+### 2.7 Results visualization
+
+We use the shiny app to connect our model. And make a prediction page on it. At the same time, we used R to make the results of our third question into an interactive heap map. Users can click on the heap map to get the distribution and comparison results of each data set. Here are our shiny app link: [Shiny App](https://za3org-kayu7823-kayu7823.shinyapps.io/imaging_5_shiny_only_improved/)
+
+## Results
+
+```{r load_results}
+# load in saved results (generated by cnn_evaluation.qmd)
+load("outputs/q1_results_20240522T114740.RData")
+load("outputs/q2_results_20240522T131016.RData")
+load("outputs/q3_results_20240522T131242.RData")
+```
+
+The mean accuracy of the classifier trained and evaluated using 1000 images in 5-fold cross validation was 8% across all 28 clusters (Figure 3.1 A). This was lower than the no-information rate of 13%, indicating the classifier had an accuracy lower than classifying all images as the most frequent cluster. It was also found that clusters with more images tend to have an overprediction of images inside the clusters (Figure 3.3 A1). The 1000 image group also showed that over an 80 epoch period, the model still was not able to reach a total accuracy of 100% (Figure 3.2). F1 scores using 10000 images (F1 = 0.146) were similar to cross-validation results using 1000 images (F1 = 0.146).
+
+```{r #fig-display_figure_cnn_performance_comparison, fig.height = 16/2.54, fig.width = 19/2.54, warning=FALSE}
+#| fig-cap: "Performance measures for cross-validation results using 1000 or 10000 images, comparing (A) accuracy and (D) F1 score across all clusters. Per-cluster performance measures for (B) accuracy and (C) F1 scores are provided for both 1000 images and 10000 images."
+
+### plots cnn perfomance results
+### define generic plotting function
+
+plot_value_pointplots = function(combined_value_results, cv_value, column_name) {
+  long_combined_value_results = combined_value_results |> 
+    mutate(cluster = as.numeric(str_replace_all(labels, "[^\\d]", ""))) |>
+    pivot_longer(cols = -c(cluster, labels)) |>
+    select(labels, cluster, value) |>
+    arrange(cluster)
+  
+  p2 = ggplot(long_combined_value_results) +
+    aes(x = factor(cluster), y = value) +
+  geom_point(shape = 19, colour = "steelblue", alpha = 0.5) +
+  geom_point(aes(fill = "Mean"), stat = "summary", fun = mean, stroke = 3, shape = 95, colour = "black") +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+    labs(x = "Clusters", y = "value") +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          legend.title = element_blank())
+  
+  p1 = ggplot(data.frame(value = cv_value)) +
+    aes(x = "All clusters", y = value) +
+    geom_boxplot() +
+    geom_point() +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+    geom_point(aes(fill = "Mean"), stat = "summary", fun = mean, stroke = 1, shape = 4, colour = "blue") +
+    labs(x = "", y = "value") +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          legend.title = element_blank())
+  
+  return(list(all = p1, by_cluster = p2))
+}
+
+### Generate accuracy plots
+
+# join accuracies from each fold
+combined_accuracy_cv_1000 = purrr::reduce(cv_1000$cv_results, full_join, by="labels")
+combined_accuracy_cv_10000 = purrr::reduce(cv_10000$cv_results, full_join, by="labels")
+  
+accuracy_pointplots_cv_1000 = plot_value_pointplots(combined_accuracy_cv_1000, cv_1000$cv_accuracy)
+accuracy_pointplots_cv_10000 = plot_value_pointplots(combined_accuracy_cv_10000, cv_10000$cv_accuracy)
+
+cnn_all_cluster_accuracy = data.frame(cv_1000 = cv_1000$cv_accuracy, cv_10000 = cv_10000$cv_accuracy) |>
+  pivot_longer(cols = everything(), names_to = "cnn", values_to = "accuracy")
+
+p_cnn_all_cluster_accuracy = ggplot(cnn_all_cluster_accuracy) +
+  aes(x = cnn, y = accuracy) +
+  geom_point(shape = 19, colour = "steelblue", alpha = 0.5) +
+  geom_point(aes(fill = "Mean"), stat = "summary", fun = mean, stroke = 8, shape = 95, colour = "black") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+  scale_x_discrete(labels = c("1000\nimages", "10000\nimages")) +
+  labs(x = "All clusters", y = "Accuracy over all clusters") +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank())
+
+accuracy_plots = wrap_plots(p_cnn_all_cluster_accuracy + 
+                        (wrap_plots(accuracy_pointplots_cv_1000$by_cluster + labs(title = "1000 images") +
+                                      accuracy_pointplots_cv_10000$by_cluster + labs(title = "10000 images")) + 
+                           plot_layout(tag_level = "new", axis_titles = "collect")) + 
+                        plot_layout(widths = c(1,8), 
+                         tag_level = "keep", 
+                         axis_titles = "collect_y")) & theme(legend.position = "none") & labs(y = "Accuracy")
+
+### Generate F1 plots
+
+get_f1 = function(cv_labels_results, cv_predictions_results) {
+  folds = length(cv_labels_results)
+  f1_results = list()
+  
+  for (i in 1:folds) {
+    levels = 1:28
+    predictions = cv_predictions_results[[i]] |> str_extract_all("\\d+") |> as.integer()
+    labels = cv_labels_results[[i]] |> str_extract_all("\\d+") |> as.integer()
+    predictions_factor = factor(predictions, levels = levels)
+    labels_factor = factor(labels, levels = levels)
+    
+    f1_result = caret::confusionMatrix(predictions_factor, labels_factor)$byClass[,"F1"] |> 
+      as.data.frame() |>
+      rownames_to_column()
+    
+    colnames(f1_result) = c("labels", "f1")
+    
+    f1_results[[i]] = f1_result
+  }
+  
+  combined_f1 = purrr::reduce(f1_results, full_join, by="labels")
+  f1_overall = combined_f1 %>%
+    summarise(across(starts_with("f1"), ~ mean(.x, na.rm = TRUE))) |>
+     as.numeric()
+  return(list(all = f1_overall, by_cluster = combined_f1))
+}
+
+f1_cv_1000 = get_f1(cv_1000$cv_labels_results, cv_1000$cv_predictions_results)
+f1_cv_10000 = get_f1(cv_10000$cv_labels_results, cv_10000$cv_predictions_results)
+
+cnn_all_cluster_f1 = data.frame(cv_1000 = f1_cv_1000$all, cv_10000 = f1_cv_1000$all) |>
+  pivot_longer(cols = everything(), names_to = "cnn", values_to = "f1")
+
+p_cnn_all_cluster_f1 = ggplot(cnn_all_cluster_f1) +
+  aes(x = cnn, y = f1) +
+  geom_point(shape = 19, colour = "steelblue", alpha = 0.5) +
+  geom_point(aes(fill = "Mean"), stat = "summary", fun = mean, stroke = 8, shape = 95, colour = "black") +
+  scale_x_discrete(labels = c("1000\nimages", "10000\nimages")) +
+  labs(x = "All clusters", y = "F1") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+  theme_bw() + 
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        legend.title = element_blank())
+
+f1_pointplots_cv_1000 = plot_value_pointplots(f1_cv_1000$by_cluster, f1_cv_1000$all)
+f1_pointplots_cv_10000 = plot_value_pointplots(f1_cv_10000$by_cluster, f1_cv_10000$all)
+f1_plots = wrap_plots(p_cnn_all_cluster_f1 + 
+                        (wrap_plots(f1_pointplots_cv_1000$by_cluster + labs(title = "1000 images") +
+                                      f1_pointplots_cv_10000$by_cluster + labs(title = "10000 images")) + 
+                           plot_layout(tag_level = "new", axis_titles = "collect")) + 
+                        plot_layout(widths = c(1,8), 
+                         tag_level = "keep", 
+                         axis_titles = "collect_y")) & theme(legend.position = "none") & labs(y = "F1")
+
+### combine and output plots
+
+accuracy_plots + 
+  f1_plots +
+  plot_layout(nrow = 3) + 
+  plot_annotation(tag_levels = c("A", 1))
+```
+
+Increasing the number of images used in cross validation led to an increase in accuracy to 11.06% (Figure 3.1 A). This accuracy was not significantly higher than the no information rate of 10.88% (p = 0.2861). One slight difference in the classifier by label frequency was that the model also slightly overpredicted certain clusters in the middle (Figure 3.3 A2). The accuracy over time also didn't increase and got worse (Figure 3.2)
+
+```{r #fig-display_heatmap, fig.height = 19/2.54, fig.width = 19/2.54, message=FALSE, warning=FALSE}
+#| fig-cap: "Distribution of predictions from 1000 and 10000 image cross-validation of the CNN including (A) distribution of true clusters versus predictions for the test set in cross-validation using (A1) 1000 images and (A2) 10000 images, ordered by true cluster frequency. (B) Heatmap of the number of predictions for each cluster, by true cluster."
+
+### plot cluster barplots  
+
+plot_cluster_barplot = function(cv_labels_results, cv_predictions_results) {
+  prediction_counts = data.frame(x = do.call(c, cv_predictions_results)) |> 
+  mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+  group_by(cluster) |>
+  count(name = "predictions")
+
+  label_counts = data.frame(x = do.call(c, cv_labels_results)) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "labels")
+  
+  combined_cluster_counts = merge(label_counts, prediction_counts, by = "cluster") |> 
+    arrange(desc(labels)) |>
+    pivot_longer(-cluster, names_to = "type", values_to = "count") |>
+    mutate(type = str_to_title(type))
+  
+  p1 = ggplot(combined_cluster_counts) +
+    aes(x = fct_inorder(as.character(cluster)), y = count, fill = type) +
+    geom_bar(stat = "identity", position = "dodge") +
+    labs(x = "Cluster, by ordered label frequency", y = "Count", fill = "") +
+    theme_bw()
+  
+  return(p1)
+}
+
+cluster_barplots = plot_cluster_barplot(cv_1000$cv_labels_results, cv_1000$cv_predictions_results) +
+  plot_cluster_barplot(cv_10000$cv_labels_results, cv_10000$cv_predictions_results) +
+  plot_layout(guides = "collect", axis_titles = "collect", tag_level = "new") +
+  plot_annotation(tag_levels = "A") & theme(legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+### plot cluster heatmap
+
+plot_categorical_heatmap = function(cv_labels_results, cv_predictions_results) {
+  label_predictions_count = data.frame(labels = do.call(c, cv_labels_results), predictions = do.call(c, cv_predictions_results)) |>
+  mutate(label_cluster = as.numeric(str_replace_all(labels, "[^\\d]", "")),
+         prediction_cluster = as.numeric(str_replace_all(predictions, "[^\\d]", "")),
+         count = 1) |>
+  select(label_cluster, prediction_cluster) |>
+  group_by(label_cluster, prediction_cluster) |>
+  summarise(count = n()) |>
+  ungroup() |>
+  complete(label_cluster, prediction_cluster)
+  
+  p1 = ggplot(label_predictions_count) +
+    aes(x = factor(label_cluster), 
+        y = factor(prediction_cluster), 
+        fill = count) +
+    geom_tile() +
+    labs(x = "Cluster", y = "Predicted cluster", fill = "Number of predictions") +
+    theme_bw()
+  
+  return(p1)
+}
+count_heatmaps = plot_categorical_heatmap(cv_1000$cv_labels_results, cv_1000$cv_predictions_results) +
+  plot_categorical_heatmap(cv_10000$cv_labels_results, cv_10000$cv_predictions_results) +
+  plot_layout(guides = "collect", axis_titles = "collect", tag_level = "new") +
+  plot_annotation(tag_levels = "A") & theme(legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+### combine plots
+
+wrap_plots(cluster_barplots)  + wrap_plots(count_heatmaps) + 
+  plot_layout(design = "A\nB", 
+              heights = c(0.25,0.5),
+              widths = c(0.5,0.5))  +
+  plot_annotation(tag_levels = c("A", 1))
+```
+
+Our final question looked at using a different dataset to see if our CNN classifier could predict the image's cluster correctly. To best map these results we created a distribution heat map that measures the Chi-Squared value of the similarity of the distributions (Figure 3.4). We found that when testing the similarity of prediction distributions between healthy mice and a different 1000-image group of original mice the older the mice the less similar distributions we had (Figure 3.4 A). We also observe that when comparing the healthy mice to other healthy mice of different ages the younger the mice are the more similar the distributions are likely to be (Figure 3.4 B). Finally, when comparing healthy mice to Alzheimer model mice the similarity of distributions are quite similar no matter what age of mice you compare (Figure 3.4 C)
+
+```{r #fig-display_chisq_heatmap, fig.width = 19/2.54}
+#| fig-cap: "Heatmap of Chi-square values comparing the distribution of predictions from different datasets, using a CNN classifier trained and validated on 1000 images. Higher values show a greater difference between distributions. (A) comparison of 1000 different cells from the Tiny Subset (where the Biotechnology data was taken from) versus 1000 cells from WT (healty, other dataset) mice from the WT-Alzheimer's model time series datasets (10x Genomics, 2023a; 10x Genomics, 2023b). (B) comparison of WT mice against itself at different time points (C) comparison of WT mice and Alzheimer's model mice"
+
+wt_datasets = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months")
+tgcrnd8_datasets = c("TgCRND8 2.5 months", "TgCRND8 5.7 months", "TgCRND8 17.9 months")
+original_dataset = "Different 1000"
+
+pairwise_1 = ggplot(original_wt_chisq_statistic_df) +
+  aes(x = Original, y = WT, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+pairwise_2 = ggplot(tgcrnd8_wt_chisq_statistic_df) +
+  aes(x = TgCRND8, y = WT, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+pairwise_3 = ggplot(wt_wt_chisq_statistic_df) +
+  aes(x = WT, y = WT2, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  labs(y = "WT") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p1 = pairwise_1 + 
+  scale_y_discrete(labels = sub("WT ", "", wt_datasets)) +
+  labs(x = "C57BL/6", y = "WT")
+p3 = pairwise_3 + 
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  scale_x_discrete(labels = sub("WT ", "", wt_datasets))
+p2 = pairwise_2 + 
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  scale_x_discrete(labels = sub("TgCRND8 ", "", tgcrnd8_datasets))
+
+p1 + 
+  p3 + 
+  p2 + 
+  plot_layout(nrow = 1, 
+              guides = "collect", 
+              widths = c(1,3,3)) +
+  plot_annotation(tag_levels = "A") &
+  labs(fill = "Chi-square \nstatistic")
+```
+
+## Discussion
+
+**The CNN model demonstrated poor performance in classifying cells into clusters during cross-validation with 1000 images**
+
+The accuracy of the classifier trained and evaluated using cross-validation of 1000 images was lower than the no-information rate of 13.6%, indicating that the trained classifier may perform worse than classifying all images as the majority class (Bicego & Mensi, 2023; Kuhn et al., 2016). Both accuracy and F1 scores are likely impacted by overfitting on the training data, as seen through the diverging loss curves and flat validation accuracy observed in the respective learning curves. In related research, Dürr & Sick, (2016) observed overfitting in CNNs that have been applied to classification of cells into specific phenotypes using DAPI images, particularly in models without data augmentation or dropout rate (Dürr & Sick, 2016). In results observed here, overfitting may be due to the model's architecture, despite a dropout rate being applied to reduce overfitting. 
+
+The relatively low accuracy and F1 scores may also reflect intrinsic limitations in the classifiability of the data. Other CNNs and deep learning classifiers that perform single cell classification have been applied to problems where differences in nuclear morphology are known, such as in cell cycle staging and specifically defined cell types (Meng et al., 2019; Narotamo et al., 2021). However, clusters in the analyzed Xenium datasets were generated using a graph-based clustering algorithm applied on single-cell gene expression information (10x Genomics, 2024). These clusters may not contain sufficiently large differences in nuclear morphology for image classification. Clustering has a number of limitations, particularly in regards to biological relevance, and has been shown to be dependent on the algorithm used, the underlying data, and noise (Gaiteri et al., 2023; Stacey et al., 2021). Per-cluster accuracies and F1 scores were generally variable, which may also relate to differences in the classifiability of the underlying clusters.
+
+\
+**Increasing the number of images used in training and cross-validation did not substantially improve performance**
+
+When using 10000 images for cross-validation, the increase in accuracy is small and suggests model performance is not substantially improved with a larger training set. However, this could also reflect the increased size of the training and validation sets. The relative similarity of F1 scores when using 1000 versus 10000 images suggests performance is similar in terms of precision and recall. The higher F1 scores and accuracies for some clusters could suggest performance is improved in some clusters.
+
+\
+**Predictions from cross-validation were spread across clusters, and appear to reflect sampling bias in the training data**
+
+The analysis of prediction distribution across numerous clusters during cross-validation points to potential sampling bias in our training datasets. This issue is observed in both the 1000 and 10000 image datasets, where the variance in prediction suggests that the classifier might not be effectively learning generalized features applicable across varied samples. Instead, the classifier appears to be disproportionately influenced by the specific examples on which it was trained. This inference is supported by the observation that certain clusters received an excessive number of predictions while others were significantly underpredicted, highlighting an uneven class representation in the training data.
+
+The likely cause of this sampling bias may be linked to the methods used for data collection or selection. Given that our datasets are predominantly composed of cell images from mouse brains, there could be insufficient representation of the diversity in cell types and their expressions across different brain regions and stages of development. Consequently, the classifier's capability to generalize from the training data to new, unseen data is hindered, diminishing its accuracy in classifying new images into the appropriate clusters.
+
+**Varying differences in the distribution of predictions could reflect limitations of the trained classifier or dataset differences**\
+The variation in prediction outcomes across different clusters indicates potential flaws in our CNN classifier or inherent dataset differences. This might stem from overfitting to trained data, evident from the varied Chi-square values among images from the Tiny Subset versus WT cells from other datasets compared to those between WT and Alzheimer's model cells. Initially trained on the Biotechnology data bundle from the Tiny Subset, the classifier may overfit to image patterns specific to this dataset's sampling method. The fixed sample source of WT and Alzheimer's model images, as opposed to the fresh frozen Tiny Subset, could impact image quality.
+
+Age-dependent differences between Tiny Subset and WT images, and among WT images themselves, might reveal underlying biological differences, less pronounced when comparing WT to Alzheimer's model images. However, limited mice numbers and timepoints severely constrain these interpretations, necessitating further data comparison to assess noise and variation effects.
+
+Additionally, the classifier's performance disparity between the training dataset (1000 images) and the validation dataset (10000 images) suggests scalability issues. The minimal performance gain in the validation phase despite increased dataset size indicates that our CNN's architecture may struggle with larger, more complex datasets without considerable adjustments.
+
+Applying the classifier to different datasets, like various stages of Alzheimer's in mice, showed dissimilar prediction distributions, hinting at robustness issues. Despite extensive training, the classifier has difficulty adapting to new, related datasets.
+
+For future iterations, enhancing the classifier's ability to handle diverse datasets would be advantageous. Implementing transfer learning, where a model pre-trained on a broad dataset is fine-tuned with specific, smaller datasets, could markedly improve adaptability and precision.
+
+## Conclusion
+
+This research explored the potential for the use of a CNN classifier to predict cell clusters from image data, with the aim of reducing the need to extract gene expression data. The CNN model we tested had limited accuracy, indicating that there are highly likely structural problems with our CNN framework. Increasing the dataset size only marginally improves performance, but overfitting still exists. It is worth pointing out that differences in distribution of predictions between healthy mouse samples were less consistent than those between healthy and diseased mouse samples. We also found that the distribution of predictions was related to age or sampling method, and potentially less related to the presence of disease. However, the conclusions drawn are likely limited by the model that was used and the number of available datasets. Our findings suggest that this application of a CNN has significant limitations in predicting cell clusters. The future work should address these limitations by using a larger number of datasets, making further adjustments to CNN architecture being used, or exploring the use of other deep learning techniques. 
+
+## Student contributions
+
+#### 6.1 Andrew
+
+Primarily responsible for preprocessing new datasets (10x Genomics, 2023b) and additional image samples (10x Genomics, 2023a) for Q2 and Q3. This involved retrieving and processing 7 datasets total to prepare them for image splitting, modifying the sample image splitting code to run with the different dataset format, running the code on the datasets to produce required amount of images from each dataset (1000 from each new datasets (6), and 1000,2000,3000,5000,10000 from original), ensuring cluster distribution was not too extreme.
+
+In regards to the report, I was responsible for writing the introduction.
+
+#### 6.2 Chenqi
+
+Mainly responsible for the shiny app, developing and rectifying all functions of the shiny app, including the page design of the shiny app, model connection, the release of the shiny app, and a series of things related to the shiny app. At the same time, we put forward some effective suggestions on research questions and participated in the discussion. For the report part, write almost the context on the Methodology part.
+
+#### 6.3 Chris
+
+I completed the 'data splitting' part of the initial part of the project, as well as part of the shiny app UI part. Moreover, I collaborated with Chenqi on the subsequent shiny app. Also the discussion part for report.
+
+#### 6.4 Jeremy
+
+Majority of work was focussed on extension question 2. Looked initially at using 2000, 3000 and 5000 image clusters before it was decided to do 1000 vs 10000 images. Created visualizations of these models and how they changed. 
+
+#### 6.5 Kelvin
+
+I wrote the main code to address the 3 key research questions of our project and generate the figures for this report (most of the code in cnn_evaluation.qmd). This includes code to process images (except for pre-processing of raw datasets) and for model training (modified from the Lab 4b code), cross-validation, and loading and saving of models and results.
+
+I outlined an interpretation of the results and discussion, wrote some of the discussion, and edited the results and discussion, and I formatted the report.qmd template and figures. I debugged and deployed the Shiny app, and made minor functional changes to the interface. 
+
+#### 6.6 Zexu Zhang
+
+Made the flow chart for the three questions, and made a basis for the introduction and method part. In addition, finish the Executive summary  and Conclusion part of the report. Also paid attention to how to make the whole project outline clear. Actively participated in group meetings throughout the project, respected all group members, and did my best to do what I could.
+
+## References
+
+::: {#refs}
+:::
+
+## Appendix
+
+### Supplementary Figures
+
+```{r #fig-display_hist_plots, fig.width = 19/2.54}
+#| fig-cap: "Learning curves and mean curve for models assessed using 5 fold cross-validation."
+
+get_hist_metric = function(cv_hist_results, metric) {
+  value_list = sapply(1:5, function(i) list(cv_hist_results[[i]]$metrics[metric])) |> 
+  as.data.frame()
+  colnames(value_list) = paste0("fold", 1:5)
+  value_list_long = value_list |>
+    mutate(epoch = 1:n()) |>
+    pivot_longer(cols = !epoch) |>
+    filter(!(epoch  == 81))
+    
+  return(value_list_long)
+}
+
+get_cv_hist_plots = function (cv_hist_results, plot_title) {
+  epoch_accuracy = get_hist_metric(cv_hist_results, "accuracy")
+  epoch_val_accuracy = get_hist_metric(cv_hist_results, "val_accuracy")
+  epoch_loss = get_hist_metric(cv_hist_results, "loss")
+  epoch_val_loss = get_hist_metric(cv_hist_results, "val_loss")
+
+  accuracy_plot = ggplot() +
+    geom_line(data = epoch_accuracy, 
+              aes(x = epoch, y = value, group = name), colour = "lightblue") +
+    stat_summary(data = epoch_accuracy, 
+                 aes(x = epoch, y = value), fun=mean, colour="blue", geom="line") +
+    geom_line(data = epoch_val_accuracy, 
+              aes(x = epoch, y = value, group = name), colour = "moccasin") +
+    stat_summary(data = epoch_val_accuracy, 
+                 aes(x = epoch, y = value), fun=mean, colour="orangered", geom="line") + 
+    labs(x = "Epoch", y = "Accuracy") +
+    scale_y_continuous(limits = c(0,1), breaks = seq(0, 1, by = 0.1)) +
+    theme_bw()# + 
+    # theme(panel.grid.major = element_blank(), 
+    #       panel.grid.minor = element_blank(),
+    #       aspect.ratio = 0.5)
+
+loss_plot = ggplot() +
+    geom_line(data = epoch_loss, 
+              aes(x = epoch, y = value, group = name), colour = "lightblue") +
+    stat_summary(data = epoch_loss, 
+                 aes(x = epoch, y = value), fun=mean, colour="blue", geom="line") +
+    geom_line(data = epoch_val_loss, 
+              aes(x = epoch, y = value, group = name), colour = "moccasin") +
+    stat_summary(data = epoch_val_loss, 
+                 aes(x = epoch, y = value), fun=mean, colour="orangered", geom="line") +
+    labs(x = "Epoch", y = "Loss") +
+    scale_y_continuous(limits = c(0,8)) +
+    theme_bw()# + 
+    # theme(panel.grid.major = element_blank(), 
+    #       panel.grid.minor = element_blank(),
+    #       aspect.ratio = 0.5)
+
+  return(wrap_elements(accuracy_plot / loss_plot + 
+                         plot_layout(guides = "collect", 
+                                     axis_titles = "collect", 
+                                     axes = "collect") + 
+                         plot_annotation(subtitle = plot_title)))
+}
+
+wrap_plots(get_cv_hist_plots(cv_1000$cv_hist_results, "1000 images"),
+get_cv_hist_plots(cv_10000$cv_hist_results, "10000 images")) +
+  plot_annotation(tag_levels = "A")
+```
+
+### Main code excerpts
+
+#### Libraries
+
+The libraries used in the main CNN evaluation code.
+
+```{r load_libraries, eval=FALSE}
+#| codecap: "code test"
+library(EBImage)
+library(tidyverse)
+library(pracma)
+library(ggimage)
+library(keras)
+library(cvTools)
+library(googledrive)
+library(ggpubr)
+library(forcats)
+library(pals)
+library(zip)
+library(caret)
+library(patchwork)
+library(gridExtra)
+```
+
+#### Download and subset files
+
+Files were preprocessed from the Xenium Output Bundle and uploaded to a Google Drive. Here they are downloaded. A random subset of 87 images from each cluster of the 10000 images is used to create the undersample dataset.
+
+```{r download_extract, eval=FALSE}
+if (!file.exists("data/Biotechnology")) {
+  if (!file.exists("data/Biotechnology.zip")) {
+    drive_deauth()
+    drive_download(as_id("1CvuzzbnO3HKnW_7bsQMEQqPs5bVGIgVW"), 
+                   path = "data/Biotechnology.zip", 
+                   overwrite = TRUE)
+  }
+  unzip("data/Biotechnology.zip", exdir="data/", overwrite=TRUE)
+}
+```
+
+```{r download_unzip_additional, eval=FALSE}
+library(googledrive)
+drive_deauth()
+
+if (!dir.exists("outputs/")) {
+  dir.create("outputs/")
+}
+
+if (!file.exists("data/different_original_lab_dataset")) {
+  if (!file.exists("data/different_original_lab_dataset.zip")) {
+    drive_deauth()
+    drive_download(as_id("1RMwRbtJmYK7TGJx5IWhoey4ukCJ8E-fH"), 
+                   path = "data/different_original_lab_dataset.zip", 
+                   overwrite = TRUE)
+  }
+  zip::unzip("data/different_original_lab_dataset.zip", exdir="data/", overwrite=TRUE)
+}
+
+if (!file.exists("data/wt_tgcrnd8")) {
+  if (!file.exists("data/wt_tgcrnd8.zip")) {
+    drive_deauth()
+    drive_download(as_id("1qDeSAhX5TyziBMwykayrjVI1S3M0wgTi"), 
+                   path = "data/wt_tgcrnd8.zip", 
+                   overwrite = TRUE)
+  }
+  zip::unzip("data/wt_tgcrnd8.zip", exdir="data/", overwrite=TRUE)
+}
+```
+
+```{r unzip_random_subset, eval=FALSE}
+set.seed(2024)
+if (!file.exists("data/different_original_lab_dataset/10000/cell_images/")) {
+  zip::unzip("data/different_original_lab_dataset/10000/cell_images.zip",
+             exdir="data/different_original_lab_dataset/10000/", overwrite=TRUE)
+}
+
+clusters = vector("list", length = length(1:28))
+
+# iterate once to find number of images in smallest cluster
+smallest_number_of_images = Inf
+for (cluster_number in 1:28) {
+  cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images/", "cluster_", as.numeric(cluster_number))
+  cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+  smallest_number_of_images = min(smallest_number_of_images, length(cluster_folder))
+}
+
+# iterate again to select a random sample from each cluster, sized based on the smallest number of images
+for (cluster_number in 1:28) {
+  cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images/", "cluster_", as.numeric(cluster_number))
+  new_cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images_undersample/", "cluster_", as.numeric(cluster_number))
+  cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+  random_image_subset_paths = sample(cluster_folder, size = smallest_number_of_images, replace = FALSE)
+  
+  dir.create(new_cluster_folder_path, recursive = TRUE)
+  
+  file.copy(from = random_image_subset_paths, 
+            to = new_cluster_folder_path,
+            overwrite = TRUE)
+}
+```
+
+#### Process images for CNN ingestion
+
+Cluster images were selected, had cell boundaries matched and were masked according to cell boundaries.
+
+```{r list_clusters, eval=FALSE}
+# generate a nested list of cluster paths based on the cluster numbers provided
+# clusters: [[path1, path2, ...] //cluster 1, [path1, path2, ...] //cluster 2, ...]
+list_clusters = function(cell_image_folder_path, cluster_numbers) {
+  clusters = vector("list", length = length(cluster_numbers))
+  
+  i = 1
+  for (cluster_number in cluster_numbers) {
+    cluster_folder_path = paste0(cell_image_folder_path, "cluster_", as.numeric(cluster_number))
+    cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+    clusters[[i]] = cluster_folder
+    i = i + 1
+  }
+  
+  names(clusters) = paste0("cluster_", cluster_numbers)
+  return(clusters)
+}
+
+get_clusterimgs = function(clusters) {
+  clusterimgs_list = vector("list", length = length(clusters))
+  #clusterimgs_list_tiled = vector("list", length = length(clusters))
+  clusterimgs_all = c()
+  
+  i = 1
+  for (cluster in clusters) {
+    clusterimgs = sapply(cluster, readImage, simplify = FALSE)
+    clusterimgs_resized = lapply(clusterimgs, resize, w = 50, h = 50)
+    cat(paste0(unique(names(clusters[i]) |> str_extract("cluster_\\d+")), names(cluster), " (n=", length(clusterimgs_resized), ")", " -- "))
+    # print(length(clusterimgs_resized))
+    # clusterimgs_tiled = EBImage::tile(EBImage::combine(clusterimgs_resized))
+    clusterimgs_all = c(clusterimgs_all, clusterimgs)
+    clusterimgs_list[[i]] = clusterimgs
+    # clusterimgs_list_tiled[[i]] = clusterimgs_tiled
+    i = i + 1
+  }
+  
+  names(clusterimgs_list) = names(clusters)
+  return(list(clusterimgs_list = clusterimgs_list,
+              clusterimgs_all = clusterimgs_all))
+}
+```
+
+```{r get_cell_ids, eval=FALSE}
+get_cell_ids = function(clusters) {
+  clustercell_ids_list = vector("list", length = length(clusters))
+  clustercell_ids_all = c()
+  
+  # iterate over file names in clusters, and extract the cell ids
+  i = 1
+  for (cluster in clusters) {
+    clustercell_ids_all = c(clustercell_ids_all, gsub("(^.*cell_)|(\\.png$)", "", cluster))
+    clustercell_ids_list[[i]] = gsub("(^.*cell_)|(\\.png$)", "", cluster)
+    i = i + 1
+  }
+  
+  names(clustercell_ids_list) = names(clusters)
+  return(list(clustercell_ids_list = clustercell_ids_list, 
+              clustercell_ids_all = clustercell_ids_all))
+}
+
+get_cell_boundaries = function(cell_boundaries_raw_path, clustercell_ids_all) {
+  cell_boundaries_raw = read.csv(cell_boundaries_raw_path)
+  cell_boundaries = cell_boundaries_raw |>
+  dplyr::filter(cell_id %in% clustercell_ids_all)
+  return(cell_boundaries)
+}
+```
+
+```{r get_inside, eval=FALSE}
+get_inside = function(cellID, img, cell_boundaries) {
+  cell_boundary = cell_boundaries |>
+    dplyr::filter(cell_id %in% cellID)
+  
+  if (length(cell_boundary) == 0) {
+    warning(paste0("No cell boundaries matching the cellID ", 
+                   cellID, 
+                   " were found in the cell boundaries file"))
+  }
+  
+  # rescale the boundary according to the pixels
+  pixels = dim(img)
+  cell_boundary$vertex_x_scaled <- 1+((cell_boundary$vertex_x - min(cell_boundary$vertex_x))/0.2125)
+  cell_boundary$vertex_y_scaled <- 1+((cell_boundary$vertex_y - min(cell_boundary$vertex_y))/0.2125)
+  
+  # identify which pixels are inside or outside of the cell segment using inpolygon
+  pixel_locations = expand.grid(seq_len(nrow(img)), seq_len(ncol(img)))
+  
+  pixels_inside = pracma::inpolygon(x = pixel_locations[,1],
+                            y = pixel_locations[,2],
+                            xp = cell_boundary$vertex_x_scaled,
+                            yp = cell_boundary$vertex_y_scaled,
+                            boundary = TRUE)
+  
+  img_inside = img
+  img_inside@.Data <- matrix(pixels_inside, nrow = nrow(img), ncol = ncol(img))
+  
+  return(img_inside)
+}
+
+mask_resize = function(img, img_inside, w = 50, h = 50) {
+  
+  img_mask = img*img_inside
+  
+  # then, transform the masked image to the same number of pixels, 50x50
+  img_mask_resized = resize(img_mask, w, h)
+  
+  return(img_mask_resized)
+}
+```
+
+```{r get_masked_inside, eval=FALSE}
+get_clusterimgs_masked_inside = function(clusters, cell_boundaries, clusterimgs_list, clustercell_ids_list) {
+  clusterimgs_masked_resized_list = vector("list", length = length(clusters))
+  clusterimgs_inside_all = c()
+  
+  # mask and resize cells for each cluster
+  for (i in 1:length(clusterimgs_list)) {
+    clustercell_ids = clustercell_ids_list[[i]]
+    clusterimgs = clusterimgs_list[[i]]
+    
+    clusterimgs_inside = mapply(get_inside, 
+                                clustercell_ids, 
+                                clusterimgs, 
+                                MoreArgs = list(cell_boundaries = cell_boundaries), SIMPLIFY = FALSE)
+    clusterimgs_inside_all = c(clusterimgs_inside_all, clusterimgs_inside)
+    clusterimgs_masked_resized = mapply(mask_resize, clusterimgs, clusterimgs_inside, SIMPLIFY = FALSE)
+    clusterimgs_masked_resized_list[[i]] = clusterimgs_masked_resized
+  }
+  
+  return(list(clusterimgs_masked_resized_list = clusterimgs_masked_resized_list,
+              clusterimgs_inside_all = clusterimgs_inside_all))
+}
+```
+
+```{r process_cluster_images, eval=FALSE}
+# example cell_images_path: "data/Biotechnology/data_processed/cell_images/"
+# example cell_boundaries_path: "data/Biotechnology/data_processed/cell_boundaries.csv.gz"
+# example selected_clusters: c(1,2,3)
+process_cluster_images = function(cell_images_path, cell_boundaries_path, selected_clusters) {
+  print(paste("Reading in clusters from", cell_images_path))
+  clusters = list_clusters(cell_images_path, selected_clusters)
+  
+  clusterimgs_results = get_clusterimgs(clusters)
+  clusterimgs_list = clusterimgs_results$"clusterimgs_list"
+  clusterimgs_all = clusterimgs_results$"clusterimgs_all"
+  print("")
+  print(paste0("Cluster image list length: ", length(clusterimgs_all)))
+  
+  # get cell ids from clusters
+  cell_ids_results = get_cell_ids(clusters)
+  clustercell_ids_list = cell_ids_results$"clustercell_ids_list"
+  clustercell_ids_all = cell_ids_results$"clustercell_ids_all"
+  
+  print(paste("Reading in cell boundaries from", cell_boundaries_path))
+  # get cell boundaries from the cell boundaries file
+  cell_boundaries = get_cell_boundaries(cell_boundaries_path, clustercell_ids_all)
+  
+  print("Defining masks and masking cell images")
+  # get masks using cell boundary information
+  clusterimgs_masked_inside_results = get_clusterimgs_masked_inside(clusters, cell_boundaries, clusterimgs_list, clustercell_ids_list)
+  clusterimgs_masked_resized_list = clusterimgs_masked_inside_results$"clusterimgs_masked_resized_list"
+  clusterimgs_inside_all = clusterimgs_masked_inside_results$"clusterimgs_inside_all"
+  
+  # check that cell id order is the same in the inside and outside images
+  if (!all(unlist(str_extract_all(names(clusterimgs_all), "(?<=cell_)[^/]*(?=\\.png)")) == names(clusterimgs_inside_all))) {
+    stop("Names of cluster images and inside sections are not the same. Some cells may be matched to the wrong inside section.")
+  }
+  
+  set.seed(2024)
+  library(keras)
+  tensorflow::set_random_seed(2024)
+  
+  # mask and resize all images
+  imgs_masked_resized_64 = mapply(mask_resize, 
+                                  clusterimgs_all,
+                                  clusterimgs_inside_all,
+                                  MoreArgs = list(w = 64, h = 64), 
+                                  SIMPLIFY = FALSE)
+  
+  img_names = names(imgs_masked_resized_64)
+  num_images = length(imgs_masked_resized_64)
+  
+  # define x and y (attributes and labels)
+  x = array(dim=c(num_images, 64, 64, 1))
+  y = factor(rep(names(clustercell_ids_list), times = sapply(clustercell_ids_list, length)))
+  
+  # randomly order indexes to shuffle x and y
+  random_order = sample(1:num_images)
+  order_test = c()
+  
+  i = 1
+  for (j in random_order) {
+    order_test[i] = names(imgs_masked_resized_64[j])
+    x[i,,,1] = imgs_masked_resized_64[[j]]@.Data
+    i = i + 1
+  }
+  
+  y = y[c(random_order)]
+  yy = model.matrix(~ y - 1)
+  
+  # testing if they should be shuffled in the same way
+  if (!all(unlist(str_extract_all(order_test, "cluster_\\d+")) == y)) {
+    stop("Order of clusters is not the same for x and y.")
+  }
+  
+  # check all clusters that were originally selected are retained in the output, warn if there are differences
+  if (!all(sort(as.numeric(str_extract(unique(y), "\\d+"))) == sort(selected_clusters))) {
+    warning("Not all selected clusters have been retained in the result")
+    warning(paste0(
+      "Differences from selected clusters: ", 
+      setdiff(sort(selected_clusters), sort(as.numeric(str_extract(unique(y), "\\d+"))))
+    ))
+  }
+  
+  cat("Shape of x:", dim(x), "\n")
+  cat("Shape of yy:", dim(yy), "\n")
+  
+  return(list(x = x, y = y, yy = yy))
+}
+```
+
+#### Define model architecture
+
+```{r model_function, eval=FALSE}
+model_function <- function(number_of_classes, input_shape, learning_rate = 0.001) {
+  
+  k_clear_session()
+  
+  model <- keras_model_sequential() %>%
+    layer_conv_2d(filters = 32, kernel_size = c(3,3), activation = 'relu', input_shape = input_shape) %>% 
+    layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+    layer_conv_2d(filters = 64, kernel_size = c(3,3), activation = 'relu') %>% 
+    layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+    layer_dropout(rate = 0.25) %>% 
+    layer_flatten() %>% 
+    layer_dense(units = 128, activation = 'relu') %>% 
+    layer_dropout(rate = 0.5) %>% 
+    layer_dense(units = 64) %>% 
+    layer_dropout(rate = 0.5) %>% 
+    layer_dense(units = number_of_classes, activation = 'softmax')  # Adjusted to 3 units for 3 clusters
+  
+  model %>% compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_adam(learning_rate = learning_rate),
+    metrics = "accuracy"
+  )
+  
+  return(model)
+  
+}
+```
+
+#### Cross-validation
+
+5-fold cross-validation was performed as follows.
+
+```{r cross_validation, eval=FALSE}
+cross_validate = function(x, yy, model_function) {
+  #start_time = Sys.time()
+  #print(paste("CV started at", start_time))
+  # the number of rows in the training data and the labels should be the same
+  if (nrow(x) != nrow(yy)) {
+    warning("Length of x and y not equal")
+  }
+  
+  set.seed(2024)
+  library(keras)
+  tensorflow::set_random_seed(2024)
+  n = nrow(x)
+  cvK = 5
+  
+  # permute all the data, into 5 folds
+  cvSets = cvTools::cvFolds(n, cvK)
+  
+  cv_accuracy = c()  # initialise results vector
+  cv_results = cv_labels_results = cv_predictions_results = cv_hist_results = list() # full results
+  
+  for (j in 1:cvK) {
+      #print(paste("CV Fold", j, ",", difftime(Sys.time(), start_time, units = "auto"), "since start of CV"))
+    
+      # define folds
+      test_id = cvSets$subsets[cvSets$which == j]
+      X_test = x[test_id,,,,drop=FALSE]
+      X_train = x[-test_id,,,,drop=FALSE]
+      y_test = yy[test_id,]
+      y_train = yy[-test_id,]
+      
+      cat(paste("Dim of X_train\t", paste(dim(X_train), collapse = " "), "\n"))
+      cat(paste("Dim of X_test\t", paste(dim(X_test), collapse = " "), "\n"))
+      cat(paste("Dim of y_train\t", paste(dim(y_train), collapse = " "), "\n"))
+      cat(paste("Dim of y_test\t", paste(dim(y_test), collapse = " "), "\n"))
+      
+      # erase previous model
+      keras::k_clear_session()
+      model = model_function(number_of_classes = length(unique(colnames(y_train))), 
+                             input_shape = dim(X_train)[2:4])
+      
+      # define model fitting parameters
+      batch_size <- 32
+      epochs <- 100
+      num_train_images = nrow(X_train)
+      
+      # fit the cnn on the training folds
+      hist = model %>% fit(
+        x = X_train,
+        y = y_train,
+        batch_size = batch_size,
+        steps_per_epoch = num_train_images %/% batch_size,
+        epochs = epochs, 
+        validation_split = 0.2,
+        verbose = 1
+      )
+      
+      # predict and evaluate accuracy on the test folds
+      labels = colnames(yy)[max.col(y_test)]
+      predictions = colnames(yy)[model |> predict(X_test) |> k_argmax() |> as.array() + 1]
+      
+      # print(head(labels))
+      # print(head(predictions))
+      print(mean(labels == predictions))
+      
+      # mean accuracy for the fold
+      cv_accuracy[j] = mean(labels == predictions)
+      
+      # all of the labels and predictions for the folds stored together
+      cv_results[[j]] = data.frame(labels = labels, predictions = predictions) |>
+                          mutate(match = as.integer(labels == predictions)) |>
+                          group_by(labels) |>
+                          summarise(correct = mean(match))
+      
+      # labels and predictions stored separately
+      cv_labels_results[[j]] = labels
+      cv_predictions_results[[j]] = predictions
+      cv_hist_results[[j]] = hist
+  }
+  
+  return(list(cv_accuracy = cv_accuracy, 
+              cv_results = cv_results, 
+              cv_labels_results = cv_labels_results, 
+              cv_predictions_results = cv_predictions_results,
+              cv_hist_results = cv_hist_results))
+}
+```
+
+```{r distributions, eval=FALSE}
+plot_cluster_barplot = function(cv_labels_results, cv_predictions_results) {
+  prediction_counts = data.frame(x = do.call(c, cv_predictions_results)) |> 
+  mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+  group_by(cluster) |>
+  count(name = "predictions")
+
+  label_counts = data.frame(x = do.call(c, cv_labels_results)) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "labels")
+  
+  combined_cluster_counts = merge(label_counts, prediction_counts, by = "cluster") |> 
+    arrange(desc(labels)) |>
+    pivot_longer(-cluster, names_to = "type", values_to = "count")
+  
+  p1 = ggplot(combined_cluster_counts) +
+    aes(x = fct_inorder(as.character(cluster)), y = count, fill = type) +
+    geom_bar(stat = "identity", position = "dodge")
+  
+  return(p1)
+}
+```
+
+An example of cross-validation using the Biotechnology dataset.
+
+```{r cv_original_1000, eval=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+processed_results = process_cluster_images(
+  cell_images_path = "data/Biotechnology/data_processed/cell_images/",
+  cell_boundaries_path = "data/Biotechnology/data_processed/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+# writes x, y, and yy to global environment
+# should probably write to a variable instead if need to store results
+list2env(processed_results, envir = .GlobalEnv)
+
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+cv = cross_validate(x = x, yy = yy, model_function = model_function)
+cv_accuracy = cv$"cv_accuracy"
+cv_results = cv$"cv_results"
+cv_labels_results = cv$"cv_labels_results"
+cv_predictions_results = cv$"cv_predictions_results"
+cv_hist_results = cv$"cv_hist_results"
+
+mean_accuracy = mean(cv_accuracy)
+```
+
+#### Train single model
+
+An example of a single model being trained using the Biotechnology data
+
+```{r train_single, eval=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+# fits the model once
+processed_results = process_cluster_images(
+  cell_images_path = "data/Biotechnology/data_processed/cell_images/",
+  cell_boundaries_path = "data/Biotechnology/data_processed/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# send results to global environment
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+list2env(processed_results, envir = .GlobalEnv)
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+
+# define model fitting parameters
+batch_size <- 32
+epochs <- 100
+num_images = nrow(x)
+
+hist <- model %>% fit(
+  x = x,
+  y = yy,
+  batch_size = batch_size,
+  steps_per_epoch = num_images %/% batch_size,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 2
+)
+
+plot(hist)
+
+# save the model
+model_name = paste0("model_Biotechnology_", gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+model_path = paste0("outputs/", model_name)
+keras::save_model_tf(model, filepath = model_path)
+saveRDS(yy, file = paste0(model_path, "/yy.RDS"))
+zip::zip(files = dir(model_name, full.names = TRUE), zipfile = paste0(model_name, ".zip"), root = "outputs")
+single_1000_trained_model_name = model_name
+
+# delete directory
+unlink(model_path)
+
+# to load in the model from the zip
+# zip::unzip("outputs/model_Biotechnology_20240509T180345.zip")
+# model = keras::load_model_tf("outputs/model_Biotechnology_20240509T180345")
+# unlink("outputs/model_Biotechnology_20240509T180345", recursive=TRUE) # deletes unzipped folder
+
+# predicted
+print(head(colnames(yy)[model |> predict(x, verbose = 2) |> k_argmax() |> as.array() + 1]))
+
+# true labels
+print(colnames(yy)[max.col(head(yy))])
+```
+
+#### Predict on datasets
+
+Distribution predictions were generated using a saved pre-trained model on the datasets identified previously.
+
+```{r load_predict_wt, eval=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+# specify which model should be loaded
+model_name = single_1000_trained_model_name
+
+# load in the saved model
+zip_name = paste0("outputs/", model_name, ".zip")
+dir_name = paste0("outputs/", model_name)
+zip::unzip(zip_name, exdir = "outputs/")
+model = keras::load_model_tf(dir_name)
+unlink(dir_name, recursive=TRUE) # deletes unzipped folder
+
+# specify datasets to predict on in the format c(cell image path, cell boundaries path)
+dataset_paths = list(
+  c("Different 1000",
+      "data/different_original_lab_dataset/Different 1000/cell_images.zip",
+      "data/different_original_lab_dataset/cell_boundaries.csv.gz"),
+  c("WT 2.5 months",
+    "data/wt_tgcrnd8/Wild type 2.5 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 2.5 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 2.5 months",
+    "data/wt_tgcrnd8/TgCRND8 2.5 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 2.5 months/cell_boundaries.csv.gz"),
+  c("WT 5.7 months",
+    "data/wt_tgcrnd8/Wild type 5.7 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 5.7 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 5.7 months",
+    "data/wt_tgcrnd8/TgCRND8 5.7 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 5.7 months/cell_boundaries.csv.gz"),
+  c("WT 13.4 months",
+    "data/wt_tgcrnd8/Wild type 13.4 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 13.4 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 17.9 months",
+    "data/wt_tgcrnd8/TgCRND8 17.9 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 17.9 months/cell_boundaries.csv.gz")
+)
+
+cv_accuracy = c()  # initialise results vector
+cv_results = cv_labels_results = cv_predictions_results = cv_hist_results = list() # full results
+dataset_names = c()
+
+j = 1
+for (dataset_path in dataset_paths) {
+  dataset_name = dataset_path[1]
+  cell_images_zip = dataset_path[2]
+  cell_boundaries_path = dataset_path[3]
+  print(paste("Predicting on cell images in ", cell_images_zip, "with boundaries", cell_boundaries_path))
+  
+  # unzip cell images
+  zip::unzip(cell_images_zip, exdir = dirname(cell_images_zip), overwrite = TRUE)
+  cell_images_path = paste0(dirname(cell_images_zip), "/cell_images/")
+  
+  # get the largest cluster
+  # assume all clusters are between 1 and the largest cluster
+  largest_cluster = grep("cluster", list.dirs(dirname(cell_images_zip)), 
+                         value = TRUE) |>
+    str_extract("(?<=cluster_)\\d+") |> 
+    as.numeric() |> 
+    max()
+  
+  # process cluster images
+  processed_results = process_cluster_images(
+    cell_images_path = cell_images_path,
+    cell_boundaries_path = cell_boundaries_path,
+    selected_clusters = 1:largest_cluster
+  )
+  
+  x = processed_results$x
+  y = processed_results$y
+  yy = processed_results$yy
+  
+  # define model fitting parameters
+  batch_size <- 32
+  epochs <- 100
+  num_train_images = nrow(x)
+  
+  # predict and evaluate accuracy on the test folds
+  labels = colnames(yy)[max.col(yy)]
+  predictions = colnames(yy)[model |> predict(x) |> k_argmax() |> as.array() + 1]
+  
+  # mean accuracy for the fold
+  cv_accuracy[j] = mean(labels == predictions)
+  
+  # all of the labels and predictions for the folds stored together
+  cv_results[[j]] = data.frame(labels = labels, predictions = predictions) |>
+                      mutate(match = as.integer(labels == predictions)) |>
+                      group_by(labels) |>
+                      summarise(correct = mean(match))
+  
+  # labels and predictions stored separately
+  cv_labels_results[[j]] = labels
+  cv_predictions_results[[j]] = predictions
+  cv_hist_results[[j]] = hist
+  dataset_names[j] = dataset_name
+  j = j + 1
+}
+
+plot_accuracy_boxplots(cv_results)
+plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+
+# combine prediction counts from multiple to one dataframe
+predictions_df = data.frame(clusters = c(), predictions = c())
+
+for (i in 1:length(cv_predictions_results)) {
+  df = data.frame(x = do.call(c, cv_predictions_results[i])) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "predictions")
+  
+  if (nrow(predictions_df) == 0) {
+    predictions_df = df
+  } else {
+    predictions_df = merge(predictions_df, df, by = "cluster") 
+  }
+}
+
+colnames(predictions_df) = c("cluster", dataset_names)
+predictions_long_df = predictions_df |> pivot_longer(cols = !cluster, names_to = "dataset", values_to = "predictions")
+
+labels_df = data.frame(clusters = c(), labels = c())
+
+for (i in 1:length(cv_labels_results)) {
+  df = data.frame(x = do.call(c, cv_labels_results[i])) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "labels")
+  
+  if (nrow(labels_df) == 0) {
+    labels_df = df
+  } else {
+    labels_df = merge(labels_df, df, by = "cluster") 
+  }
+}
+
+colnames(labels_df) = c("cluster", dataset_names)
+labels_long_df  = labels_df |> pivot_longer(cols = !cluster, names_to = "dataset", values_to = "labels")
+merged = merge(predictions_long_df, labels_long_df, by = c("cluster", "dataset")) |> 
+    pivot_longer(cols = !c("cluster", "dataset"), names_to = "type", values_to = "count")
+```
+
+An example of Chi-square value calculation for a comparison between the original (Tiny Subset dataset nd WT datasets)
+
+```{r pairwise_original_wt, eval=FALSE}
+original_dataset = "Different 1000"
+wt_datasets = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months")
+
+pairwise_chisq_statistic = vector("list", length = nrow(crossing(original_dataset, wt_datasets)))
+i = 1
+
+for (wt_dataset in wt_datasets) {
+  pair_wider = merged |> 
+    filter(type == "predictions", str_detect(dataset, paste0(wt_dataset, "|", original_dataset))) |>
+    pivot_wider(names_from = dataset, values_from = count, names_prefix = "count_") |> 
+    select(cluster, starts_with("count")) |>
+    arrange(cluster)# %>% # native pipe (|>) does not work with dot notation
+    #mutate(squared_differences = ((.[[2]] - .[[3]])**2)/.[[3]]) # (O-E)^2/E
+  
+  #print(pair_wider)
+  #print(pair_wider |> pull(squared_differences) |> sum())
+  #statistic = pair_wider |> pull(squared_differences) |> sum() |> as.numeric()
+  #print(chisq.test(pair_wider |> column_to_rownames(var = "cluster")))
+  statistic = chisq.test(pair_wider |> column_to_rownames(var = "cluster"))$statistic
+  pairwise_chisq_statistic[[i]] = c(wt_dataset, original_dataset, statistic)
+  i = i + 1
+}
+
+pairwise_chisq_statistic_df = data.frame(do.call(rbind, pairwise_chisq_statistic))
+names(pairwise_chisq_statistic_df) = c("WT", "Original", "chisq_statistic")
+pairwise_chisq_statistic_df = pairwise_chisq_statistic_df |>
+  mutate(WT = factor(WT, levels = wt_datasets),
+         chisq_statistic = as.numeric(chisq_statistic))
+
+original_wt_chisq_statistic_df = pairwise_chisq_statistic_df
+
+pairwise_1 = ggplot(pairwise_chisq_statistic_df) +
+  aes(x = Original, y = WT, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r knit_exit}
+knitr::knit_exit()
+```

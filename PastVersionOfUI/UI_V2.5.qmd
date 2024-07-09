@@ -1,0 +1,380 @@
+---
+title: "UI_V2.5"
+author: "Chris"
+format: html
+editor: visual
+---
+
+```{r,message=FALSE,warning=FALSE}
+library(shiny)
+library(bslib)
+library(bsicons)
+library(shinydashboard)
+library(plotly)
+library(EBImage)
+library(keras)
+library(zip)
+library(stringr)
+```
+
+```{r, warning=FALSE,message=FALSE}
+#specify which model should be loaded
+model_name = "model_Biotechnology_20240515T120510"
+
+q3_save_path = "outputs/q3_results_20240516T132939.RData"
+load(q3_save_path)
+
+# load in the saved model
+zip_name = paste0("outputs/", model_name, ".zip")
+dir_name = paste0("outputs/", model_name)
+zip::unzip(zip_name, exdir = "outputs/")
+yy = readRDS(paste0(dir_name, "/yy.RDS"))
+model = keras::load_model_tf(dir_name)
+unlink(dir_name, recursive=TRUE) # deletes unzipped folder
+
+```
+
+```{r functions}
+# --------------------------Functions------------------------------------
+mask_resize = function(img, img_inside, w = 50, h = 50) {
+  
+  img_mask = img * img_inside
+  
+  # then, transform the masked image to the same number of pixels, 50x50
+  img_mask_resized = resize(img_mask, w, h)
+  
+  return(img_mask_resized)
+}
+
+
+extract_numbers <- function(input_string) {
+  numbers <- gsub("\\D", "", input_string)
+
+  numbers <- as.integer(numbers)
+
+  number_list <- list(numbers)
+
+  return(number_list)
+}
+```
+
+```{r }
+# --------------------------UI------------------------------------
+ui <- dashboardPage(
+  skin = "black",
+  dashboardHeader(title = "Shiny APP"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Introduction", tabName = "introduction", icon = icon("image")),
+      menuItem("Prediction", tabName = "Prediction", icon = icon("image")),
+      menuItem("New Prediction", tabName = "newPrediction", icon = icon("image")),
+      menuItem("Analysis", tabName = "analysis", icon = icon("search"))
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      tabItem(tabName = "introduction",
+              h2("Welcome")
+      ),
+      tabItem(tabName = "Prediction",
+              fluidRow(
+                box(title = "Input", 
+                    solidHeader = TRUE,
+                    h2("Upload Images"),
+                    fileInput("file2", 
+                                "Choose Image File 2", 
+                                multiple = TRUE, 
+                                accept = c("image/png")),
+                    verbatimTextOutput("fileInfo2"),
+                    h2("Please select the image for prediction"),
+                    uiOutput("imageSelect2"),
+                    actionButton("predictBtn2", "Predict")
+                    ),
+                column(
+                    width = 6,
+                    box(title = "Selected image", 
+                        width = NULL,
+                        solidHeader = TRUE,
+                        imageOutput("displayedImage2", 
+                                    width = "60px",
+                                    height = "60px")),
+                    box(title = "Predicted cluster",
+                        width = NULL,
+                        solidHeader = TRUE,
+                        strong(textOutput("outputOfprediction2"),
+                               style = "font-size: 32px"),
+                        plotOutput("prediction_barplot")),
+                )
+              )
+      ),
+      tabItem(tabName = "newPrediction",
+              fluidRow(
+                box(title = "Input", 
+                    solidHeader = TRUE,
+                    h2("Upload Images"),
+                    fileInput("file3", 
+                              "Choose Image Files", 
+                              multiple = TRUE, 
+                              accept = c("image/png", "image/jpeg")),
+                    verbatimTextOutput("fileInfo3"),
+                    h2("Please select the image for prediction"),
+                    uiOutput("imageSelect3"),
+                    actionButton("predictBtn3", "Predict")
+                    ),
+                column(
+                    width = 6,
+                    box(title = "Selected image", 
+                        width = NULL,
+                        solidHeader = TRUE,
+                        imageOutput("displayedImage3", 
+                                    width = "60px",
+                                    height = "60px")),
+                    box(title = "Predicted cluster",
+                        width = NULL,
+                        solidHeader = TRUE,
+                        strong(textOutput("outputOfprediction3"),
+                               style = "font-size: 32px"),
+                        plotOutput("prediction_barplot3")),
+                )
+              )
+      ),
+      tabItem(tabName = "analysis",
+              h2("Analysis Reports"),
+              fluidRow(
+                shinycssloaders::withSpinner(plotlyOutput("heatmap")),
+                shinycssloaders::withSpinner(plotlyOutput("distribution_barplot")),
+                verbatimTextOutput("heatmap_text")
+              )
+      )
+    )
+  )
+)
+```
+
+```{r server}
+
+server <- function(input, output, session) {
+  # --------------------------Create folders------------------------------------
+  if (!dir.exists("Upload1")) {
+    dir.create("Upload1")
+  }
+  if (!dir.exists("Upload2")) {
+    dir.create("Upload2")
+  }
+
+  # ----------------------page 2-------------------------------
+  observeEvent(input$file2, {
+    req(input$file2)
+    for (i in 1:nrow(input$file2)) {
+      file_temp <- input$file2$datapath[i]
+      file_name <- input$file2$name[i]
+      permanent_path <- file.path(getwd(), "Upload2", file_name)
+      file.copy(file_temp, permanent_path, overwrite = TRUE)
+    }
+  })
+
+  #-------view select images
+  imageDir2 <- file.path(getwd(), "Upload2")
+
+  # Monitor changes in the image directory
+  imageFiles2 <- reactivePoll(1000, session,
+                              checkFunc = function() {
+                                file.info(imageDir2)$mtime
+                              },
+                              valueFunc = function() {
+                                list.files(path = imageDir2, pattern = "png|jpg|jpeg")
+                              }
+  )
+
+  output$imageSelect2 <- renderUI({
+    img_files2 <- imageFiles2()
+    if (length(img_files2) == 0) {
+      HTML("<p>No images available. Please upload images.</p>")
+    } else {
+      selectInput("selectedImage2", "Choose an image from Upload2:",
+                  choices = imageFiles2(),
+                  selected = imageFiles2()[1])
+    }
+  })
+  
+  #-------------------preview the image
+
+  output$displayedImage2 <- renderImage({
+    req(input$selectedImage2)
+    filename <- file.path(getwd(), "Upload2", input$selectedImage2)
+    list(src = filename, contentType = 'image/png', width = "64 px", height = "64 px", alt = "This is the selected image")
+  }, deleteFile = FALSE)
+
+  
+  #--------------------------------------------------prediction------------------------------
+
+  # predict button
+  observeEvent(input$predictBtn2, {
+    req(input$selectedImage2)
+    input_img_array = reactive({
+      print(input$selectedImage2)
+      filename <- file.path(getwd(), "Upload2", input$selectedImage2)
+
+      img <- png::readPNG(filename)
+  
+      img_inside <- img
+      img_masked_resized <- mask_resize(img, img_inside, w = 64, h = 64)
+      x = array(dim=c(1, 64, 64, 1))
+      x[1,,,1] = img_masked_resized@.Data
+  
+      #img_array <- array_reshape(as.array(img_masked_resized), c(1, 64, 64, 1)) / 255
+      x
+    })
+    
+    predictions = reactive({
+      img_array = input_img_array()
+      model_predictions = model |> predict(img_array)
+      model_predictions
+    })
+    
+    predicted_class = reactive({
+      img_array = input_img_array()
+      model_predictions = predictions()
+      class = colnames(yy)[model_predictions |> k_argmax() |> as.array() + 1]
+      class
+      # result <- extract_numbers(class)
+      # print(result)
+    })
+
+    
+    #(output the prediction) for print
+    output$outputOfprediction2 <- renderText({
+      model_predictions = predictions()
+      
+      paste0("Cluster ", 
+            predicted_class() |> 
+              str_extract_all("\\d+") |> 
+              as.numeric(),
+            " (", round(max(model_predictions),2) , ")")
+      
+    })
+    
+    output$prediction_barplot = renderPlot({
+      predictions_t = t(predictions())
+      # todo 1:28 is temporary
+      predictions_by_cluster = data.frame(x = colnames(yy) |> str_extract_all("\\d+") |> as.numeric() |> unlist() |> as.factor(), y = predictions_t)
+      
+      
+      ggplot(predictions_by_cluster) +
+        aes(x = x, y = y) +
+        geom_bar(stat = "identity") +
+        scale_y_continuous(limits = c(0,1))
+    })
+  })
+
+  #--------------------------------------------------Page 3------------------------------
+  if (!dir.exists("Upload3")) {
+      dir.create("Upload3")
+    }
+
+  # upload images
+  observeEvent(input$file3, {
+    req(input$file3)
+    lapply(1:nrow(input$file3), function(i) {
+      file_temp <- input$file3$datapath[i]
+      file_name <- input$file3$name[i]
+      permanent_path <- file.path(getwd(), "Upload3", file_name)
+      file.copy(file_temp, permanent_path, overwrite = TRUE)
+    })
+  })
+  imageDir3 <- file.path(getwd(), "Upload3")
+
+  # Monitor changes in the image directory
+  imageFiles3 <- reactivePoll(1000, session,
+                              checkFunc = function() {
+                                file.info(imageDir3)$mtime
+                              },
+                              valueFunc = function() {
+                                list.files(path = imageDir3, pattern = "png|jpg|jpeg")
+                              }
+  )
+
+  # preview image
+  output$imageSelect3 <- renderUI({
+    img_files3 <- imageFiles3()
+    if (length(img_files3) == 0) {
+      HTML("<p>No images available. Please upload images.</p>")
+    } else {
+      selectInput("selectedImage3", "Choose an image from Upload3:",
+                  choices = imageFiles3(),
+                  selected = imageFiles3()[1])
+    }
+  })
+
+  #print(preview)
+  output$displayedImage3 <- renderImage({
+    req(input$selectedImage3)
+    filename <- file.path(getwd(), "Upload3", input$selectedImage3)
+    list(src = filename, contentType = 'image/png', width = "64 px", height = "64 px", alt = "This is the selected image")
+  }, deleteFile = FALSE)
+ 
+  # ------------------------------------------------analysis -------------------------------
+  heatmap_subplot = subplot(ggplotly(pairwise_1),
+            ggplotly(pairwise_3),
+            ggplotly(pairwise_2))
+  
+  output$heatmap = renderPlotly({
+    heatmap_subplot
+  })
+  
+  # contains curveNumber, pointNumber, x, y, and z
+  click_data = reactive(event_data("plotly_click"))
+  
+  clicked_tile = reactive({
+    req(event_data("plotly_click"))
+    pairwise_list = list(pairwise_1, pairwise_3, pairwise_2)
+    click_location = click_data()
+    
+    # get x and y position in the subplot
+    # (only need to consider 1 row, because only one click event)
+    x = click_location[1, "x"]
+    y = click_location[1, "y"]
+    
+    # convert curve number to index of corresponding plot
+    index = (click_location[1, "curveNumber"] %/% 3) + 1
+
+    # first column corresponds to the y axis text, second is x text
+    # gets the levels of the column and then gets the one corresponding to the index
+    # as.factor() is needed for columns with only one variable
+    subplot_y = levels(pairwise_list[[index]]$data[,1] |> as.factor())[y]
+    subplot_x = levels(pairwise_list[[index]]$data[,2] |> as.factor())[x]
+    list(subplot_x, subplot_y)
+  })
+  
+  output$heatmap_text = renderPrint({
+    clicked = clicked_tile()
+    paste(clicked, collapse = '|')
+  })
+  
+  output$distribution_barplot = renderPlotly({
+    levels = c("Different 1000", "WT 2.5 months", "WT 5.7 months", "WT 13.4 months", "TgCRND8 2.5 months", "TgCRND8 5.7 months", "TgCRND8 17.9 months")
+    selected = clicked_tile() |> paste(collapse = '|')
+
+    p = ggplot(merged |> filter(type == "predictions", str_detect(dataset, selected))) +
+      aes(x = factor(as.numeric(cluster)),
+      y = count,
+      fill = factor(dataset, levels = levels)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      labs(title = clicked_tile() |> paste(collapse = ' and '), fill = "none") +
+      theme_bw()
+    
+    ggplotly(p)
+  })  
+
+}
+
+```
+
+```{r,warning=FALSE }
+# Combine the UI and server components to create the Shiny app
+shinyApp(ui = ui, server = server)
+```
+
+```{r}
+
+```

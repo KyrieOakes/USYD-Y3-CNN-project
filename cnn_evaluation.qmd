@@ -1,0 +1,1097 @@
+---
+title: "CNN evaluation"
+author: "Imaging 5"
+format: 
+  html: 
+    embed-resources: true
+    code-fold: true
+    code-tools: true
+editor: visual
+execute:
+  cache: true
+---
+
+## Libraries
+
+```{r libraries}
+library(EBImage)
+library(tidyverse)
+library(pracma)
+library(ggimage)
+library(keras)
+library(cvTools)
+library(googledrive)
+library(ggpubr)
+library(forcats)
+library(pals)
+library(zip)
+library(caret)
+library(patchwork)
+library(gridExtra)
+```
+
+```{r download_extract}
+if (!file.exists("data/Biotechnology")) {
+  if (!file.exists("data/Biotechnology.zip")) {
+    drive_deauth()
+    drive_download(as_id("1CvuzzbnO3HKnW_7bsQMEQqPs5bVGIgVW"), 
+                   path = "data/Biotechnology.zip", 
+                   overwrite = TRUE)
+  }
+  unzip("data/Biotechnology.zip", exdir="data/", overwrite=TRUE)
+}
+```
+
+```{r download_unzip_additional}
+library(googledrive)
+drive_deauth()
+
+if (!dir.exists("outputs/")) {
+  dir.create("outputs/")
+}
+
+if (!file.exists("data/different_original_lab_dataset")) {
+  if (!file.exists("data/different_original_lab_dataset.zip")) {
+    drive_deauth()
+    drive_download(as_id("1RMwRbtJmYK7TGJx5IWhoey4ukCJ8E-fH"), 
+                   path = "data/different_original_lab_dataset.zip", 
+                   overwrite = TRUE)
+  }
+  zip::unzip("data/different_original_lab_dataset.zip", exdir="data/", overwrite=TRUE)
+}
+
+if (!file.exists("data/wt_tgcrnd8")) {
+  if (!file.exists("data/wt_tgcrnd8.zip")) {
+    drive_deauth()
+    drive_download(as_id("1qDeSAhX5TyziBMwykayrjVI1S3M0wgTi"), 
+                   path = "data/wt_tgcrnd8.zip", 
+                   overwrite = TRUE)
+  }
+  zip::unzip("data/wt_tgcrnd8.zip", exdir="data/", overwrite=TRUE)
+}
+```
+
+```{r unzip_random_sample}
+set.seed(2024)
+if (!file.exists("data/different_original_lab_dataset/10000/cell_images/")) {
+  zip::unzip("data/different_original_lab_dataset/10000/cell_images.zip",
+             exdir="data/different_original_lab_dataset/10000/", overwrite=TRUE)
+}
+
+clusters = vector("list", length = length(1:28))
+
+# iterate once to find number of images in smallest cluster
+smallest_number_of_images = Inf
+for (cluster_number in 1:28) {
+  cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images/", "cluster_", as.numeric(cluster_number))
+  cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+  smallest_number_of_images = min(smallest_number_of_images, length(cluster_folder))
+}
+
+# iterate again to select a random sample from each cluster, sized based on the smallest number of images
+for (cluster_number in 1:28) {
+  cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images/", "cluster_", as.numeric(cluster_number))
+  new_cluster_folder_path = paste0("data/different_original_lab_dataset/10000/cell_images_undersample/", "cluster_", as.numeric(cluster_number))
+  cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+  random_image_subset_paths = sample(cluster_folder, size = smallest_number_of_images, replace = FALSE)
+  
+  dir.create(new_cluster_folder_path, recursive = TRUE)
+  
+  file.copy(from = random_image_subset_paths, 
+            to = new_cluster_folder_path,
+            overwrite = TRUE)
+}
+```
+
+```{r list_clusters}
+# generate a nested list of cluster paths based on the cluster numbers provided
+# clusters: [[path1, path2, ...] //cluster 1, [path1, path2, ...] //cluster 2, ...]
+list_clusters = function(cell_image_folder_path, cluster_numbers) {
+  clusters = vector("list", length = length(cluster_numbers))
+  
+  i = 1
+  for (cluster_number in cluster_numbers) {
+    cluster_folder_path = paste0(cell_image_folder_path, "cluster_", as.numeric(cluster_number))
+    cluster_folder = list.files(cluster_folder_path, full.names = TRUE)
+    clusters[[i]] = cluster_folder
+    i = i + 1
+  }
+  
+  names(clusters) = paste0("cluster_", cluster_numbers)
+  return(clusters)
+}
+
+get_clusterimgs = function(clusters) {
+  clusterimgs_list = vector("list", length = length(clusters))
+  #clusterimgs_list_tiled = vector("list", length = length(clusters))
+  clusterimgs_all = c()
+  
+  i = 1
+  for (cluster in clusters) {
+    clusterimgs = sapply(cluster, readImage, simplify = FALSE)
+    clusterimgs_resized = lapply(clusterimgs, resize, w = 50, h = 50)
+    cat(paste0(unique(names(clusters[i]) |> str_extract("cluster_\\d+")), names(cluster), " (n=", length(clusterimgs_resized), ")", " -- "))
+    # print(length(clusterimgs_resized))
+    # clusterimgs_tiled = EBImage::tile(EBImage::combine(clusterimgs_resized))
+    clusterimgs_all = c(clusterimgs_all, clusterimgs)
+    clusterimgs_list[[i]] = clusterimgs
+    # clusterimgs_list_tiled[[i]] = clusterimgs_tiled
+    i = i + 1
+  }
+  
+  names(clusterimgs_list) = names(clusters)
+  return(list(clusterimgs_list = clusterimgs_list,
+              clusterimgs_all = clusterimgs_all))
+}
+```
+
+```{r get_cell_ids}
+get_cell_ids = function(clusters) {
+  clustercell_ids_list = vector("list", length = length(clusters))
+  clustercell_ids_all = c()
+  
+  # iterate over file names in clusters, and extract the cell ids
+  i = 1
+  for (cluster in clusters) {
+    clustercell_ids_all = c(clustercell_ids_all, gsub("(^.*cell_)|(\\.png$)", "", cluster))
+    clustercell_ids_list[[i]] = gsub("(^.*cell_)|(\\.png$)", "", cluster)
+    i = i + 1
+  }
+  
+  names(clustercell_ids_list) = names(clusters)
+  return(list(clustercell_ids_list = clustercell_ids_list, 
+              clustercell_ids_all = clustercell_ids_all))
+}
+
+get_cell_boundaries = function(cell_boundaries_raw_path, clustercell_ids_all) {
+  cell_boundaries_raw = read.csv(cell_boundaries_raw_path)
+  cell_boundaries = cell_boundaries_raw |>
+  dplyr::filter(cell_id %in% clustercell_ids_all)
+  return(cell_boundaries)
+}
+```
+
+```{r get_inside}
+get_inside = function(cellID, img, cell_boundaries) {
+  cell_boundary = cell_boundaries |>
+    dplyr::filter(cell_id %in% cellID)
+  
+  if (length(cell_boundary) == 0) {
+    warning(paste0("No cell boundaries matching the cellID ", 
+                   cellID, 
+                   " were found in the cell boundaries file"))
+  }
+  
+  # rescale the boundary according to the pixels
+  pixels = dim(img)
+  cell_boundary$vertex_x_scaled <- 1+((cell_boundary$vertex_x - min(cell_boundary$vertex_x))/0.2125)
+  cell_boundary$vertex_y_scaled <- 1+((cell_boundary$vertex_y - min(cell_boundary$vertex_y))/0.2125)
+  
+  # identify which pixels are inside or outside of the cell segment using inpolygon
+  pixel_locations = expand.grid(seq_len(nrow(img)), seq_len(ncol(img)))
+  
+  pixels_inside = pracma::inpolygon(x = pixel_locations[,1],
+                            y = pixel_locations[,2],
+                            xp = cell_boundary$vertex_x_scaled,
+                            yp = cell_boundary$vertex_y_scaled,
+                            boundary = TRUE)
+  
+  img_inside = img
+  img_inside@.Data <- matrix(pixels_inside, nrow = nrow(img), ncol = ncol(img))
+  
+  return(img_inside)
+}
+
+mask_resize = function(img, img_inside, w = 50, h = 50) {
+  
+  img_mask = img*img_inside
+  
+  # then, transform the masked image to the same number of pixels, 50x50
+  img_mask_resized = resize(img_mask, w, h)
+  
+  return(img_mask_resized)
+}
+```
+
+```{r get_masked_inside}
+get_clusterimgs_masked_inside = function(clusters, cell_boundaries, clusterimgs_list, clustercell_ids_list) {
+  clusterimgs_masked_resized_list = vector("list", length = length(clusters))
+  clusterimgs_inside_all = c()
+  
+  # mask and resize cells for each cluster
+  for (i in 1:length(clusterimgs_list)) {
+    clustercell_ids = clustercell_ids_list[[i]]
+    clusterimgs = clusterimgs_list[[i]]
+    
+    clusterimgs_inside = mapply(get_inside, 
+                                clustercell_ids, 
+                                clusterimgs, 
+                                MoreArgs = list(cell_boundaries = cell_boundaries), SIMPLIFY = FALSE)
+    clusterimgs_inside_all = c(clusterimgs_inside_all, clusterimgs_inside)
+    clusterimgs_masked_resized = mapply(mask_resize, clusterimgs, clusterimgs_inside, SIMPLIFY = FALSE)
+    clusterimgs_masked_resized_list[[i]] = clusterimgs_masked_resized
+  }
+  
+  return(list(clusterimgs_masked_resized_list = clusterimgs_masked_resized_list,
+              clusterimgs_inside_all = clusterimgs_inside_all))
+}
+```
+
+```{r define_model_function}
+model_function <- function(number_of_classes, input_shape, learning_rate = 0.001) {
+  
+  k_clear_session()
+  
+  model <- keras_model_sequential() %>%
+    layer_conv_2d(filters = 32, kernel_size = c(3,3), activation = 'relu', input_shape = input_shape) %>% 
+    layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+    layer_conv_2d(filters = 64, kernel_size = c(3,3), activation = 'relu') %>% 
+    layer_max_pooling_2d(pool_size = c(2, 2)) %>% 
+    layer_dropout(rate = 0.25) %>% 
+    layer_flatten() %>% 
+    layer_dense(units = 128, activation = 'relu') %>% 
+    layer_dropout(rate = 0.5) %>% 
+    layer_dense(units = 64) %>% 
+    layer_dropout(rate = 0.5) %>% 
+    layer_dense(units = number_of_classes, activation = 'softmax')  # Adjusted to 3 units for 3 clusters
+  
+  model %>% compile(
+    loss = "categorical_crossentropy",
+    optimizer = optimizer_adam(learning_rate = learning_rate),
+    metrics = "accuracy"
+  )
+  
+  return(model)
+  
+}
+```
+
+```{r process_cluster_images}
+# example cell_images_path: "data/Biotechnology/data_processed/cell_images/"
+# example cell_boundaries_path: "data/Biotechnology/data_processed/cell_boundaries.csv.gz"
+# example selected_clusters: c(1,2,3)
+process_cluster_images = function(cell_images_path, cell_boundaries_path, selected_clusters) {
+  print(paste("Reading in clusters from", cell_images_path))
+  clusters = list_clusters(cell_images_path, selected_clusters)
+  
+  clusterimgs_results = get_clusterimgs(clusters)
+  clusterimgs_list = clusterimgs_results$"clusterimgs_list"
+  clusterimgs_all = clusterimgs_results$"clusterimgs_all"
+  print("")
+  print(paste0("Cluster image list length: ", length(clusterimgs_all)))
+  
+  # get cell ids from clusters
+  cell_ids_results = get_cell_ids(clusters)
+  clustercell_ids_list = cell_ids_results$"clustercell_ids_list"
+  clustercell_ids_all = cell_ids_results$"clustercell_ids_all"
+  
+  print(paste("Reading in cell boundaries from", cell_boundaries_path))
+  # get cell boundaries from the cell boundaries file
+  cell_boundaries = get_cell_boundaries(cell_boundaries_path, clustercell_ids_all)
+  
+  print("Defining masks and masking cell images")
+  # get masks using cell boundary information
+  clusterimgs_masked_inside_results = get_clusterimgs_masked_inside(clusters, cell_boundaries, clusterimgs_list, clustercell_ids_list)
+  clusterimgs_masked_resized_list = clusterimgs_masked_inside_results$"clusterimgs_masked_resized_list"
+  clusterimgs_inside_all = clusterimgs_masked_inside_results$"clusterimgs_inside_all"
+  
+  # check that cell id order is the same in the inside and outside images
+  if (!all(unlist(str_extract_all(names(clusterimgs_all), "(?<=cell_)[^/]*(?=\\.png)")) == names(clusterimgs_inside_all))) {
+    stop("Names of cluster images and inside sections are not the same. Some cells may be matched to the wrong inside section.")
+  }
+  
+  set.seed(2024)
+  library(keras)
+  tensorflow::set_random_seed(2024)
+  
+  # mask and resize all images
+  imgs_masked_resized_64 = mapply(mask_resize, 
+                                  clusterimgs_all,
+                                  clusterimgs_inside_all,
+                                  MoreArgs = list(w = 64, h = 64), 
+                                  SIMPLIFY = FALSE)
+  
+  img_names = names(imgs_masked_resized_64)
+  num_images = length(imgs_masked_resized_64)
+  
+  # define x and y (attributes and labels)
+  x = array(dim=c(num_images, 64, 64, 1))
+  y = factor(rep(names(clustercell_ids_list), times = sapply(clustercell_ids_list, length)))
+  
+  # randomly order indexes to shuffle x and y
+  random_order = sample(1:num_images)
+  order_test = c()
+  
+  i = 1
+  for (j in random_order) {
+    order_test[i] = names(imgs_masked_resized_64[j])
+    x[i,,,1] = imgs_masked_resized_64[[j]]@.Data
+    i = i + 1
+  }
+  
+  y = y[c(random_order)]
+  yy = model.matrix(~ y - 1)
+  
+  # testing if they should be shuffled in the same way
+  if (!all(unlist(str_extract_all(order_test, "cluster_\\d+")) == y)) {
+    stop("Order of clusters is not the same for x and y.")
+  }
+  
+  # check all clusters that were originally selected are retained in the output, warn if there are differences
+  if (!all(sort(as.numeric(str_extract(unique(y), "\\d+"))) == sort(selected_clusters))) {
+    warning("Not all selected clusters have been retained in the result")
+    warning(paste0(
+      "Differences from selected clusters: ", 
+      setdiff(sort(selected_clusters), sort(as.numeric(str_extract(unique(y), "\\d+"))))
+    ))
+  }
+  
+  cat("Shape of x:", dim(x), "\n")
+  cat("Shape of yy:", dim(yy), "\n")
+  
+  return(list(x = x, y = y, yy = yy))
+}
+```
+
+```{r cross_validation}
+cross_validate = function(x, yy, model_function) {
+  #start_time = Sys.time()
+  #print(paste("CV started at", start_time))
+  # the number of rows in the training data and the labels should be the same
+  if (nrow(x) != nrow(yy)) {
+    warning("Length of x and y not equal")
+  }
+  
+  set.seed(2024)
+  library(keras)
+  tensorflow::set_random_seed(2024)
+  n = nrow(x)
+  cvK = 5
+  
+  # permute all the data, into 5 folds
+  cvSets = cvTools::cvFolds(n, cvK)
+  
+  cv_accuracy = c()  # initialise results vector
+  cv_results = cv_labels_results = cv_predictions_results = cv_hist_results = list() # full results
+  
+  for (j in 1:cvK) {
+      #print(paste("CV Fold", j, ",", difftime(Sys.time(), start_time, units = "auto"), "since start of CV"))
+    
+      # define folds
+      test_id = cvSets$subsets[cvSets$which == j]
+      X_test = x[test_id,,,,drop=FALSE]
+      X_train = x[-test_id,,,,drop=FALSE]
+      y_test = yy[test_id,]
+      y_train = yy[-test_id,]
+      
+      cat(paste("Dim of X_train\t", paste(dim(X_train), collapse = " "), "\n"))
+      cat(paste("Dim of X_test\t", paste(dim(X_test), collapse = " "), "\n"))
+      cat(paste("Dim of y_train\t", paste(dim(y_train), collapse = " "), "\n"))
+      cat(paste("Dim of y_test\t", paste(dim(y_test), collapse = " "), "\n"))
+      
+      # erase previous model
+      keras::k_clear_session()
+      model = model_function(number_of_classes = length(unique(colnames(y_train))), 
+                             input_shape = dim(X_train)[2:4])
+      
+      # define model fitting parameters
+      batch_size <- 32
+      epochs <- 100
+      num_train_images = nrow(X_train)
+      
+      # fit the cnn on the training folds
+      hist = model %>% fit(
+        x = X_train,
+        y = y_train,
+        batch_size = batch_size,
+        steps_per_epoch = num_train_images %/% batch_size,
+        epochs = epochs, 
+        validation_split = 0.2,
+        verbose = 1
+      )
+      
+      # predict and evaluate accuracy on the test folds
+      labels = colnames(yy)[max.col(y_test)]
+      predictions = colnames(yy)[model |> predict(X_test) |> k_argmax() |> as.array() + 1]
+      
+      # print(head(labels))
+      # print(head(predictions))
+      print(mean(labels == predictions))
+      
+      # mean accuracy for the fold
+      cv_accuracy[j] = mean(labels == predictions)
+      
+      # all of the labels and predictions for the folds stored together
+      cv_results[[j]] = data.frame(labels = labels, predictions = predictions) |>
+                          mutate(match = as.integer(labels == predictions)) |>
+                          group_by(labels) |>
+                          summarise(correct = mean(match))
+      
+      # labels and predictions stored separately
+      cv_labels_results[[j]] = labels
+      cv_predictions_results[[j]] = predictions
+      cv_hist_results[[j]] = hist
+  }
+  
+  return(list(cv_accuracy = cv_accuracy, 
+              cv_results = cv_results, 
+              cv_labels_results = cv_labels_results, 
+              cv_predictions_results = cv_predictions_results,
+              cv_hist_results = cv_hist_results))
+}
+```
+
+```{r accuracy_boxplots}
+plot_accuracy_boxplots = function(cv_results) {
+  combined_accuracy_results = purrr::reduce(cv_results, full_join, by="labels")
+  
+  long_combined_accuracy_results = combined_accuracy_results |> 
+    mutate(cluster = as.numeric(str_replace_all(labels, "[^\\d]", ""))) |>
+    pivot_longer(cols = -c(cluster, labels), values_to = "accuracy") |>
+    select(labels, cluster, accuracy) |>
+    arrange(cluster)
+  
+  p2 = ggplot(long_combined_accuracy_results) +
+    aes(x = factor(cluster), y = accuracy) +
+    geom_boxplot() +
+    geom_point() +
+    geom_point(aes(fill = "Mean accuracy"), stat = "summary", fun = mean, stroke = 1, shape = 4, colour = "blue") +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+    labs(x = "Clusters", y = "Accuracy") +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          legend.title = element_blank())
+  
+  p1 = ggplot(data.frame(accuracy = cv_accuracy)) +
+    aes(x = "All clusters", y = accuracy) +
+    geom_boxplot() +
+    geom_point() +
+    scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, by = 0.1)) +
+    geom_point(aes(fill = "Mean accuracy"), stat = "summary", fun = mean, stroke = 1, shape = 4, colour = "blue") +
+    labs(x = "", y = "Accuracy") +
+    theme_bw() + 
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          legend.title = element_blank())
+  
+  
+  p_combined = wrap_elements(p1 + p2 + 
+    plot_layout(
+      nrow = 1,
+      guides = "collect", 
+      widths = c(1,9))) & 
+    theme(legend.position = "bottom")
+  
+  return(p_combined)
+}
+```
+
+```{r distributions}
+plot_cluster_barplot = function(cv_labels_results, cv_predictions_results) {
+  prediction_counts = data.frame(x = do.call(c, cv_predictions_results)) |> 
+  mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+  group_by(cluster) |>
+  count(name = "predictions")
+
+  label_counts = data.frame(x = do.call(c, cv_labels_results)) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "labels")
+  
+  combined_cluster_counts = merge(label_counts, prediction_counts, by = "cluster") |> 
+    arrange(desc(labels)) |>
+    pivot_longer(-cluster, names_to = "type", values_to = "count")
+  
+  p1 = ggplot(combined_cluster_counts) +
+    aes(x = fct_inorder(as.character(cluster)), y = count, fill = type) +
+    geom_bar(stat = "identity", position = "dodge")
+  
+  return(p1)
+}
+```
+
+```{r categorical_bubbleplot}
+plot_categorical_bubbleplot = function(cv_labels_results, cv_predictions_results) {
+  label_predictions_count = data.frame(labels = do.call(c, cv_labels_results), predictions = do.call(c, cv_predictions_results)) |>
+  mutate(label_cluster = as.numeric(str_replace_all(labels, "[^\\d]", "")),
+         prediction_cluster = as.numeric(str_replace_all(predictions, "[^\\d]", "")),
+         count = 1) |>
+  select(label_cluster, prediction_cluster) |>
+  group_by(label_cluster, prediction_cluster) |>
+  summarise(count = n()) |>
+  ungroup() |>
+  complete(label_cluster, prediction_cluster)
+  
+  p1 = ggplot(label_predictions_count) +
+    aes(x = factor(label_cluster), 
+        y = factor(prediction_cluster), 
+        size = count, 
+        colour = factor(label_cluster)) +
+    geom_point() +
+    scale_colour_manual(
+      values = as.vector(pals::polychrome(n = length(unique(label_predictions_count$label_cluster)))),
+      na.value="white") +
+    scale_alpha_discrete(range = c(0,1)) +
+    scale_size(breaks = c(1,5,10,50)) +
+    labs(alpha = "1", size = "1") +
+    guides(colour = "none") +
+    theme_bw()
+  
+  return(p1)
+}
+```
+
+## Question 1
+
+### Cross validation
+
+```{r cv_original_1000, message=FALSE, warning=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+  
+processed_results = process_cluster_images(
+  cell_images_path = "data/Biotechnology/data_processed/cell_images/",
+  cell_boundaries_path = "data/Biotechnology/data_processed/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+# writes x, y, and yy to global environment
+# should probably write to a variable instead if need to store results
+list2env(processed_results, envir = .GlobalEnv)
+
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+cv_1000 = cross_validate(x = x, yy = yy, model_function = model_function)
+cv_accuracy = cv_1000$"cv_accuracy"
+cv_results = cv_1000$"cv_results"
+cv_labels_results = cv_1000$"cv_labels_results"
+cv_predictions_results = cv_1000$"cv_predictions_results"
+cv_hist_results = cv_1000$"cv_hist_results"
+
+mean_accuracy = mean(cv_accuracy)
+```
+
+### Train single model
+
+```{r train_single, message=FALSE, warning=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+# fits the model once
+processed_results = process_cluster_images(
+  cell_images_path = "data/Biotechnology/data_processed/cell_images/",
+  cell_boundaries_path = "data/Biotechnology/data_processed/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# send results to global environment
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+list2env(processed_results, envir = .GlobalEnv)
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+
+# define model fitting parameters
+batch_size <- 32
+epochs <- 100
+num_images = nrow(x)
+
+hist <- model %>% fit(
+  x = x,
+  y = yy,
+  batch_size = batch_size,
+  steps_per_epoch = num_images %/% batch_size,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 2
+)
+
+plot(hist)
+
+# save the model
+model_name = paste0("model_Biotechnology_", gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+model_path = paste0("outputs/", model_name)
+keras::save_model_tf(model, filepath = model_path)
+saveRDS(yy, file = paste0(model_path, "/yy.RDS"))
+zip::zip(files = dir(model_name, full.names = TRUE), zipfile = paste0(model_name, ".zip"), root = "outputs")
+single_1000_trained_model_name = model_name
+
+# delete directory
+unlink(model_path)
+
+# to load in the model from the zip
+# zip::unzip("outputs/model_Biotechnology_20240509T180345.zip")
+# model = keras::load_model_tf("outputs/model_Biotechnology_20240509T180345")
+# unlink("outputs/model_Biotechnology_20240509T180345", recursive=TRUE) # deletes unzipped folder
+
+# predicted
+print(head(colnames(yy)[model |> predict(x, verbose = 2) |> k_argmax() |> as.array() + 1]))
+
+# true labels
+print(colnames(yy)[max.col(head(yy))])
+```
+
+### Save
+
+```{r save_q1}
+output_path = paste0("outputs/q1_results_", 
+                     gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+
+save(cv_1000,
+     file = paste0(output_path,".RData"))
+```
+
+```{r save_cv_1000}
+# output_path = paste0("outputs/cv_results_Biotechnology_", 
+#                      gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+# 
+# save(cv, file = paste0(output_path,".RData"))
+# 
+# dir.create(paste0(output_path,"_processed/"))
+# plot_accuracy_boxplots(cv_results)
+# ggsave(paste0(output_path,"_processed/boxplot.png"), width = 19, height = 11, units = "cm")
+# plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+# ggsave(paste0(output_path,"_processed/barplot.png"), width = 19, height = 11, units = "cm")
+# plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+# ggsave(paste0(output_path,"_processed/bubbleplot.png"), width = 19, height = 11, units = "cm")
+# cat(mean(cv_accuracy), file = paste0(output_path,"_processed/accuracy.txt"), sep = "\n")
+# zip::zip(zipfile = paste0(output_path,"_processed.zip"), files = paste0(output_path,"_processed/"))
+# unlink(paste0(output_path,"_processed"))
+```
+
+## Question 2
+
+### CV original 10000
+
+```{r cv_original_10000, message=FALSE, warning=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+if (!file.exists("data/different_original_lab_dataset/10000/cell_images/")) {
+  zip::unzip("data/different_original_lab_dataset/10000/cell_images.zip",
+             exdir="data/different_original_lab_dataset/10000/", overwrite=TRUE)
+}
+
+processed_results = process_cluster_images(
+  cell_images_path = "data/different_original_lab_dataset/10000/cell_images/",
+  cell_boundaries_path = "data/different_original_lab_dataset/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+# writes x, y, and yy to global environment
+# should probably write to a variable instead if need to store results
+list2env(processed_results, envir = .GlobalEnv)
+
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+cv_10000 = cross_validate(x = x, yy = yy, model_function = model_function)
+cv_accuracy = cv_10000$"cv_accuracy"
+cv_results = cv_10000$"cv_results"
+cv_labels_results = cv_10000$"cv_labels_results"
+cv_predictions_results = cv_10000$"cv_predictions_results"
+cv_hist_results = cv_10000$"cv_hist_results"
+
+mean_accuracy = mean(cv_accuracy)
+accuracy_boxplots_10000 = plot_accuracy_boxplots(cv_results)
+cluster_barplot_10000 = plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+categorical_bubbleplot_10000 = plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+```
+
+### Undersample
+
+```{r cv_undersample_10000}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+processed_results = process_cluster_images(
+  cell_images_path = "data/different_original_lab_dataset/10000/cell_images_undersample/",
+  cell_boundaries_path = "data/different_original_lab_dataset/cell_boundaries.csv.gz",
+  selected_clusters = 1:28
+)
+
+# essentially same as x = processed_results$"x", y = processed_results$"y", ...
+# writes x, y, and yy to global environment
+# should probably write to a variable instead if need to store results
+list2env(processed_results, envir = .GlobalEnv)
+
+model = model_function(number_of_classes = length(unique(y)), input_shape = dim(x)[2:4])
+cv_undersample_10000 = cross_validate(x = x, yy = yy, model_function = model_function)
+cv_accuracy = cv_undersample_10000$"cv_accuracy"
+cv_results = cv_undersample_10000$"cv_results"
+cv_labels_results = cv_undersample_10000$"cv_labels_results"
+cv_predictions_results = cv_undersample_10000$"cv_predictions_results"
+cv_hist_results = cv_undersample_10000$"cv_hist_results"
+
+mean_accuracy_undersample_10000 = mean(cv_accuracy)
+accuracy_boxplots_undersample_10000 = plot_accuracy_boxplots(cv_results)
+cluster_barplot_undersample_10000 = plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+categorical_bubbleplot_undersample_10000 = plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+
+# output_path = paste0("outputs/cv_results_original_10000_", 
+#                      gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+# 
+# plot_accuracy_boxplots(cv_results)
+# plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+# plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+```
+
+### Save
+
+```{r save_q2}
+output_path = paste0("outputs/q2_results_", 
+                     gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+
+save(cv_10000, 
+     cv_undersample_10000,
+     file = paste0(output_path,".RData"))
+```
+
+## Question 3
+
+```{r load_predict_wt, message=FALSE, warning=FALSE}
+set.seed(2024)
+library(keras)
+tensorflow::set_random_seed(2024)
+
+# specify which model should be loaded
+model_name = single_1000_trained_model_name
+
+# load in the saved model
+zip_name = paste0("outputs/", model_name, ".zip")
+dir_name = paste0("outputs/", model_name)
+zip::unzip(zip_name, exdir = "outputs/")
+model = keras::load_model_tf(dir_name)
+unlink(dir_name, recursive=TRUE) # deletes unzipped folder
+
+# specify datasets to predict on in the format c(cell image path, cell boundaries path)
+dataset_paths = list(
+  c("Different 1000",
+      "data/different_original_lab_dataset/Different 1000/cell_images.zip",
+      "data/different_original_lab_dataset/cell_boundaries.csv.gz"),
+  c("WT 2.5 months",
+    "data/wt_tgcrnd8/Wild type 2.5 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 2.5 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 2.5 months",
+    "data/wt_tgcrnd8/TgCRND8 2.5 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 2.5 months/cell_boundaries.csv.gz"),
+  c("WT 5.7 months",
+    "data/wt_tgcrnd8/Wild type 5.7 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 5.7 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 5.7 months",
+    "data/wt_tgcrnd8/TgCRND8 5.7 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 5.7 months/cell_boundaries.csv.gz"),
+  c("WT 13.4 months",
+    "data/wt_tgcrnd8/Wild type 13.4 months/cell_images.zip",
+    "data/wt_tgcrnd8/Wild type 13.4 months/cell_boundaries.csv.gz"),
+  c("TgCRND8 17.9 months",
+    "data/wt_tgcrnd8/TgCRND8 17.9 months/cell_images.zip",
+    "data/wt_tgcrnd8/TgCRND8 17.9 months/cell_boundaries.csv.gz")
+)
+
+cv_accuracy = c()  # initialise results vector
+cv_results = cv_labels_results = cv_predictions_results = cv_hist_results = list() # full results
+dataset_names = c()
+
+j = 1
+for (dataset_path in dataset_paths) {
+  dataset_name = dataset_path[1]
+  cell_images_zip = dataset_path[2]
+  cell_boundaries_path = dataset_path[3]
+  print(paste("Predicting on cell images in ", cell_images_zip, "with boundaries", cell_boundaries_path))
+  
+  # unzip cell images
+  zip::unzip(cell_images_zip, exdir = dirname(cell_images_zip), overwrite = TRUE)
+  cell_images_path = paste0(dirname(cell_images_zip), "/cell_images/")
+  
+  # get the largest cluster
+  # assume all clusters are between 1 and the largest cluster
+  largest_cluster = grep("cluster", list.dirs(dirname(cell_images_zip)), 
+                         value = TRUE) |>
+    str_extract("(?<=cluster_)\\d+") |> 
+    as.numeric() |> 
+    max()
+  
+  # process cluster images
+  processed_results = process_cluster_images(
+    cell_images_path = cell_images_path,
+    cell_boundaries_path = cell_boundaries_path,
+    selected_clusters = 1:largest_cluster
+  )
+  
+  x = processed_results$x
+  y = processed_results$y
+  yy = processed_results$yy
+  
+  # define model fitting parameters
+  batch_size <- 32
+  epochs <- 100
+  num_train_images = nrow(x)
+  
+  # predict and evaluate accuracy on the test folds
+  labels = colnames(yy)[max.col(yy)]
+  predictions = colnames(yy)[model |> predict(x) |> k_argmax() |> as.array() + 1]
+  
+  # mean accuracy for the fold
+  cv_accuracy[j] = mean(labels == predictions)
+  
+  # all of the labels and predictions for the folds stored together
+  cv_results[[j]] = data.frame(labels = labels, predictions = predictions) |>
+                      mutate(match = as.integer(labels == predictions)) |>
+                      group_by(labels) |>
+                      summarise(correct = mean(match))
+  
+  # labels and predictions stored separately
+  cv_labels_results[[j]] = labels
+  cv_predictions_results[[j]] = predictions
+  cv_hist_results[[j]] = hist
+  dataset_names[j] = dataset_name
+  j = j + 1
+}
+
+plot_accuracy_boxplots(cv_results)
+plot_cluster_barplot(cv_labels_results, cv_predictions_results)
+plot_categorical_bubbleplot(cv_labels_results, cv_predictions_results)
+
+# combine prediction counts from multiple to one dataframe
+predictions_df = data.frame(clusters = c(), predictions = c())
+
+for (i in 1:length(cv_predictions_results)) {
+  df = data.frame(x = do.call(c, cv_predictions_results[i])) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "predictions")
+  
+  if (nrow(predictions_df) == 0) {
+    predictions_df = df
+  } else {
+    predictions_df = merge(predictions_df, df, by = "cluster") 
+  }
+}
+
+colnames(predictions_df) = c("cluster", dataset_names)
+predictions_long_df = predictions_df |> pivot_longer(cols = !cluster, names_to = "dataset", values_to = "predictions")
+
+labels_df = data.frame(clusters = c(), labels = c())
+
+for (i in 1:length(cv_labels_results)) {
+  df = data.frame(x = do.call(c, cv_labels_results[i])) |> 
+    mutate(cluster = as.numeric(str_replace_all(x, "[^\\d]", ""))) |>
+    group_by(cluster) |>
+    count(name = "labels")
+  
+  if (nrow(labels_df) == 0) {
+    labels_df = df
+  } else {
+    labels_df = merge(labels_df, df, by = "cluster") 
+  }
+}
+
+colnames(labels_df) = c("cluster", dataset_names)
+labels_long_df  = labels_df |> pivot_longer(cols = !cluster, names_to = "dataset", values_to = "labels")
+merged = merge(predictions_long_df, labels_long_df, by = c("cluster", "dataset")) |> 
+    pivot_longer(cols = !c("cluster", "dataset"), names_to = "type", values_to = "count")
+```
+
+```{r predictions_graphs_additional}
+ggplot(merged |> filter(type == "predictions")) +
+  aes(x = factor(as.numeric(cluster)), y = count, fill = dataset) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "predictions", fill = "none")
+
+ggplot(merged |> filter(type == "predictions", str_detect(dataset, "WT"))) +
+  aes(x = factor(as.numeric(cluster)), y = count, fill = factor(dataset, levels = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months"))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "predictions", fill = "none") +
+  scale_fill_brewer(palette = "Blues") +
+  scale_y_continuous(limits = c(0,150)) +
+  theme_bw()
+
+ggplot(merged |> filter(type == "predictions", str_detect(dataset, "TgCRND8"))) +
+  aes(x = factor(as.numeric(cluster)), y = count, fill = factor(dataset, levels = c("TgCRND8 2.5 months", "TgCRND8 5.7 months", "TgCRND8 17.9 months"))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "predictions", fill = "none") +
+  scale_fill_brewer(palette = "Blues") +
+  scale_y_continuous(limits = c(0,150)) +
+  theme_bw()
+```
+
+```{r pairwise_original_wt}
+original_dataset = "Different 1000"
+wt_datasets = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months")
+
+pairwise_chisq_statistic = vector("list", length = nrow(crossing(original_dataset, wt_datasets)))
+i = 1
+
+for (wt_dataset in wt_datasets) {
+  pair_wider = merged |> 
+    filter(type == "predictions", str_detect(dataset, paste0(wt_dataset, "|", original_dataset))) |>
+    pivot_wider(names_from = dataset, values_from = count, names_prefix = "count_") |> 
+    select(cluster, starts_with("count")) |>
+    arrange(cluster)# %>% # native pipe (|>) does not work with dot notation
+    #mutate(squared_differences = ((.[[2]] - .[[3]])**2)/.[[3]]) # (O-E)^2/E
+  
+  print(pair_wider)
+  #print(pair_wider |> pull(squared_differences) |> sum())
+  #statistic = pair_wider |> pull(squared_differences) |> sum() |> as.numeric()
+  print(chisq.test(pair_wider |> column_to_rownames(var = "cluster")))
+  statistic = chisq.test(pair_wider |> column_to_rownames(var = "cluster"))$statistic
+  pairwise_chisq_statistic[[i]] = c(wt_dataset, original_dataset, statistic)
+  i = i + 1
+}
+
+pairwise_chisq_statistic_df = data.frame(do.call(rbind, pairwise_chisq_statistic))
+names(pairwise_chisq_statistic_df) = c("WT", "Original", "chisq_statistic")
+pairwise_chisq_statistic_df = pairwise_chisq_statistic_df |>
+  mutate(WT = factor(WT, levels = wt_datasets),
+         chisq_statistic = as.numeric(chisq_statistic))
+
+original_wt_chisq_statistic_df = pairwise_chisq_statistic_df
+
+pairwise_1 = ggplot(pairwise_chisq_statistic_df) +
+  aes(x = Original, y = WT, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r pairwise_wt_tgcrnd8}
+tgcrnd8_datasets = c("TgCRND8 2.5 months", "TgCRND8 5.7 months", "TgCRND8 17.9 months")
+wt_datasets = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months")
+
+pairwise_chisq_statistic = vector("list", length = nrow(crossing(tgcrnd8_datasets, wt_datasets)))
+i = 1
+
+for (wt_dataset in wt_datasets) {
+  for (tgcrnd8_dataset in tgcrnd8_datasets) {
+    pair_wider = merged |> 
+      filter(type == "predictions", str_detect(dataset, paste0(wt_dataset, "|", tgcrnd8_dataset))) |>
+      pivot_wider(names_from = dataset, values_from = count, names_prefix = "count_") |> 
+      select(cluster, starts_with("count")) |>
+      arrange(cluster)# %>% # native pipe (|>) does not work with dot notation
+      #mutate(squared_differences = ((.[[2]] - .[[3]])**2)/.[[3]]) # (O-E)^2/E
+    
+    print(pair_wider)
+    #print(pair_wider |> pull(squared_differences) |> sum())
+    #statistic = pair_wider |> pull(squared_differences) |> sum() |> as.numeric()
+    print(chisq.test(pair_wider |> column_to_rownames(var = "cluster")))
+    statistic = chisq.test(pair_wider |> column_to_rownames(var = "cluster"))$statistic
+    pairwise_chisq_statistic[[i]] = c(wt_dataset, tgcrnd8_dataset, statistic)
+    i = i + 1
+  }
+}
+
+pairwise_chisq_statistic_df = data.frame(do.call(rbind, pairwise_chisq_statistic))
+names(pairwise_chisq_statistic_df) = c("WT", "TgCRND8", "chisq_statistic")
+pairwise_chisq_statistic_df = pairwise_chisq_statistic_df |>
+  mutate(WT = factor(WT, levels = wt_datasets),
+         TgCRND8 = factor(TgCRND8, levels = tgcrnd8_datasets),
+         chisq_statistic = as.numeric(chisq_statistic))
+
+tgcrnd8_wt_chisq_statistic_df = pairwise_chisq_statistic_df
+
+pairwise_2 = ggplot(pairwise_chisq_statistic_df) +
+  aes(x = TgCRND8, y = WT, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r pairwise_wt_wt2}
+wt_datasets = c("WT 2.5 months", "WT 5.7 months", "WT 13.4 months")
+
+pairwise_chisq_statistic = vector("list", length = nrow(crossing(wt_datasets, wt_datasets)))
+i = 1
+
+for (wt_dataset in wt_datasets) {
+  for (wt_dataset_2 in wt_datasets) {
+    wt_wider_1 = merged |> 
+      filter(type == "predictions", str_detect(dataset, paste0(wt_dataset))) |>
+      pivot_wider(names_from = dataset, values_from = count, names_prefix = "count_") |>
+      select(cluster, starts_with("count"))
+
+    wt_wider_2 = merged |> 
+      filter(type == "predictions", str_detect(dataset, paste0(wt_dataset_2))) |>
+      pivot_wider(names_from = dataset, values_from = count, names_prefix = "count_") |>
+      select(cluster, starts_with("count"))
+    
+    pair_wider = merge(wt_wider_1, wt_wider_2, by = "cluster") |>
+      arrange(cluster)# %>% # native pipe (|>) does not work with dot notation
+      #mutate(squared_differences = ((.[[2]] - .[[3]])**2)/.[[3]]) # (O-E)^2/E
+    
+    print(pair_wider)
+    #print(pair_wider |> pull(squared_differences) |> sum())
+    #statistic = pair_wider |> pull(squared_differences) |> sum() |> as.numeric()
+    print(chisq.test(pair_wider |> column_to_rownames(var = "cluster")))
+    statistic = chisq.test(pair_wider |> column_to_rownames(var = "cluster"))$statistic
+    pairwise_chisq_statistic[[i]] = c(wt_dataset, wt_dataset_2, statistic)
+    i = i + 1
+  }
+}
+
+pairwise_chisq_statistic_df = data.frame(do.call(rbind, pairwise_chisq_statistic))
+names(pairwise_chisq_statistic_df) = c("WT", "WT2", "chisq_statistic")
+pairwise_chisq_statistic_df = pairwise_chisq_statistic_df |>
+  mutate(WT = factor(WT, levels = wt_datasets),
+         WT2 = factor(WT2, levels = wt_datasets),
+         chisq_statistic = as.numeric(chisq_statistic))
+
+wt_wt_chisq_statistic_df = pairwise_chisq_statistic_df
+
+pairwise_3 = ggplot(pairwise_chisq_statistic_df) +
+  aes(x = WT, y = WT2, fill = chisq_statistic) +
+  geom_tile() +
+  geom_text(aes(label = round(chisq_statistic, 0))) +
+  scale_fill_continuous(limits = c(0, 350)) +
+  labs(y = "WT") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r all_pairwise}
+p1 = pairwise_1 + 
+  scale_y_discrete(labels = sub("WT ", "", wt_datasets)) +
+  labs(x = "C57BL/6", y = "")
+p3 = pairwise_3 + 
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  scale_x_discrete(labels = sub("WT ", "", wt_datasets))
+p2 = pairwise_2 + 
+  theme(axis.text.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank()) + 
+  scale_x_discrete(labels = sub("TgCRND8 ", "", tgcrnd8_datasets))
+
+p1 + 
+  p3 + 
+  p2 + 
+  plot_layout(nrow = 1, 
+              guides = "collect", 
+              widths = c(1,3,3)) +
+  plot_annotation(tag_levels = "A") &
+  labs(fill = "Chi-square \nstatistic")
+```
+
+### Save
+
+```{r save_q3}
+output_path = paste0("outputs/q3_results_", 
+                     gsub("[^A-Za-z0-9]", "", format_ISO8601(Sys.time())))
+
+save(merged, 
+     original_wt_chisq_statistic_df, 
+     wt_wt_chisq_statistic_df, 
+     tgcrnd8_wt_chisq_statistic_df, 
+     pairwise_1,
+     pairwise_3,
+     pairwise_2,
+     file = paste0(output_path,".RData"))
+```
+
+```{r knit_exit}
+knitr::knit_exit()
+```
